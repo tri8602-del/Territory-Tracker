@@ -799,7 +799,7 @@ async function ensureFirebase(){
     return firebaseReady;
   }catch(e){
     console.error('Firebase initialization failed:',e);
-    if($('syncSheet')) syncSetStatus('Firebase could not connect. The diagnostic details below show the actual Firebase error.');
+    showFirebaseDiagnostic(e);
     return false;
   }
 }
