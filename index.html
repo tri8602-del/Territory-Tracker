@@ -1,0 +1,1720 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#007aff">
+<title>Territory Tracker</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Arial;background:#f2f2f7;color:#111}
+.app{height:100vh;display:flex;flex-direction:column}.header{background:#fff;padding:45px 12px 9px;border-bottom:1px solid #ddd;z-index:5}
+.header h1{margin:0;text-align:center;font-size:20px}.header p{text-align:center;margin:3px 0;color:#666;font-size:12px}
+#map{flex:1;min-height:0}.bottom{background:#fff;padding:9px 9px calc(9px + env(safe-area-inset-bottom));box-shadow:0 -2px 12px #0002;z-index:10}
+.actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}.actions button{border:0;border-radius:8px;padding:7px 3px;min-height:34px;font-weight:700;font-size:12px;line-height:14px;background:#e5e5ea}.actions .blue{background:#007aff;color:#fff}
+.legend{text-align:center;color:#666;font-size:10px;margin-top:7px}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 3px 0 7px;vertical-align:-1px}
+#editor,#houseSheet{display:none;position:fixed;left:10px;right:10px;top:82px;bottom:auto;background:#fff;border-radius:16px;box-shadow:0 4px 20px #0004;padding:14px;z-index:10000;max-height:52vh;overflow:auto}
+.show{display:block!important}.editorBtns{display:flex;flex-wrap:nowrap;gap:4px;margin-top:8px;overflow-x:auto;padding-bottom:2px}.editorBtns button,.roadBtns button{border:0;border-radius:8px;padding:7px 7px;min-height:34px;font-size:11px;line-height:13px;font-weight:700;background:#e5e5ea;white-space:nowrap;flex:1 1 auto}.editorBtns .active,.roadBtns .primary{background:#007aff;color:#fff}.editorBtns button.pulse,.actions button.pulse{background:#007aff;color:#fff}
+.roadControls{display:none;margin-top:10px;padding:10px;background:#f2f2f7;border:1px solid #d1d1d6;border-radius:12px;position:relative;z-index:10001}.roadBtns{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-top:8px}
+.small{font-size:12px;color:#666}.sheetTitle{font-size:19px;font-weight:700}.statuses{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin:12px 0}.statuses button{border:0;border-radius:10px;padding:10px 3px;font-weight:700}
+textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding:9px;font:inherit}.save{width:100%;border:0;border-radius:11px;background:#007aff;color:#fff;padding:12px;margin-top:8px;font-weight:700}
+#banner{display:none;position:absolute;top:86px;left:10px;right:10px;background:#fff;border-radius:12px;padding:9px;text-align:center;font-size:12px;font-weight:700;box-shadow:0 2px 10px #0003;z-index:25}
+
+.dnw-center-label{
+  background:transparent!important;
+  border:0!important;
+  width:0!important;
+  height:0!important;
+  pointer-events:none!important;
+}
+.dnw-center-label div{
+  display:inline-block;
+  transform:translate(-50%,-50%);
+  background:rgba(255,255,255,.82);
+  border:1px solid rgba(160,120,0,.7);
+  border-radius:5px;
+  padding:3px 7px;
+  font-weight:700;
+  font-size:13px;
+  line-height:1.15;
+  color:#222;
+  white-space:nowrap;
+  text-shadow:0 1px 1px rgba(255,255,255,.7);
+}
+
+@media (max-width:600px){
+  body.editor-open .bottom{display:none!important}
+  body.editor-open #map{
+    bottom:0!important;
+  }
+  body.editor-open #editor{
+    top:auto!important;
+    bottom:0!important;
+    max-height:42dvh!important;
+    z-index:40000!important;
+  }
+}
+
+#syncSheet{
+ display:none;position:fixed;left:10px;right:10px;top:82px;bottom:auto;
+ background:#fff;border-radius:16px;box-shadow:0 4px 20px #0004;padding:14px;
+ z-index:45000;max-height:70vh;overflow:auto
+}
+#syncSheet.show{display:block!important}
+#syncSheet label{display:block;margin-top:8px}
+#syncSheet input{width:100%;box-sizing:border-box;margin-top:3px}
+@media(max-width:600px){
+  #syncSheet{
+    left:7px!important;right:7px!important;top:auto!important;
+    bottom:calc(7px + env(safe-area-inset-bottom))!important;
+    max-height:78dvh!important;padding:12px;border-radius:18px;
+  }
+}
+
+
+#syncSignedInBadge{font-weight:600}
+#territoryManager{position:fixed;inset:0;background:rgba(0,0,0,.38);z-index:35000;display:none;align-items:flex-end}
+#territoryManager.show{display:flex}
+.tmSheet{background:#fff;width:100%;max-height:82vh;border-radius:18px 18px 0 0;padding:14px;box-shadow:0 -8px 30px rgba(0,0,0,.2);overflow:auto}
+.tmTitle{font-size:20px;font-weight:800;margin-bottom:5px}.tmSub{font-size:13px;color:#555;margin-bottom:10px}
+.tmRow{display:flex;align-items:center;gap:7px;padding:10px 4px;border-bottom:1px solid #eee}.tmRowName{flex:1;font-weight:700}.tmMeta{font-size:11px;color:#777}
+.tmBtns{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.tmBtns button{flex:1;min-width:125px}
+@media(max-width:600px){#syncSheet input{font-size:16px!important;min-height:44px}}
+</style>
+
+<style id="iphone-layout-v28">
+@media (max-width:600px){
+  html,body{width:100%;height:100%;overflow:hidden}
+  .app{height:100dvh;min-height:100dvh;position:relative}
+  .header{
+    position:fixed!important;top:0;left:0;right:0;
+    height:58px;
+    padding:calc(env(safe-area-inset-top) + 5px) 10px 5px;
+    z-index:20000!important;
+    background:#fff;
+  }
+  .header h1{font-size:17px;line-height:20px}
+  .header p{font-size:10px;margin:1px 0 0}
+  #map{
+    position:fixed!important;
+    top:58px!important;left:0!important;right:0!important;
+    bottom:126px!important;height:auto!important;min-height:0!important;
+    z-index:1!important;
+  }
+  .bottom{
+    position:fixed!important;
+    left:0!important;right:0!important;bottom:0!important;
+    height:126px;
+    padding:6px 7px calc(6px + env(safe-area-inset-bottom));
+    box-sizing:border-box;
+    background:#fff;
+    border-top:1px solid #d1d1d6;
+    box-shadow:0 -3px 16px #0003;
+    z-index:20000!important;
+    overflow:hidden;
+  }
+  .actions{
+    display:grid!important;
+    grid-template-columns:repeat(4,minmax(0,1fr))!important;
+    grid-auto-rows:34px;
+    gap:4px;
+  }
+  .actions button{
+    min-width:0;min-height:34px;padding:3px 2px;
+    border-radius:8px;font-size:10px;line-height:11px;font-weight:700;
+    touch-action:manipulation;-webkit-tap-highlight-color:transparent;
+  }
+  .legend{font-size:8px;margin-top:4px;white-space:nowrap;overflow:hidden}
+  #banner{
+    position:fixed!important;top:62px!important;left:7px!important;right:7px!important;
+    font-size:12px;padding:7px;z-index:25000!important;
+  }
+  #editor,#houseSheet{
+    position:fixed!important;left:7px!important;right:7px!important;
+    top:auto!important;bottom:calc(7px + env(safe-area-inset-bottom))!important;
+    max-height:84dvh!important;padding:12px;border-radius:18px;
+    z-index:30000!important;overflow:auto;-webkit-overflow-scrolling:touch;
+  }
+  #editor .sheetTitle,#houseSheet .sheetTitle{font-size:18px}
+  .editorBtns{display:flex!important;flex-wrap:nowrap!important;gap:4px!important;overflow-x:auto!important}
+  .editorBtns button,.roadBtns button{min-height:34px!important;padding:6px 6px!important;font-size:10px!important;line-height:11px!important;touch-action:manipulation;flex:1 0 auto!important}
+  .roadControls{padding:8px}
+  .roadBtns{grid-template-columns:1fr;gap:6px}
+  .statuses{grid-template-columns:repeat(2,1fr);gap:7px}
+  .statuses button{min-height:48px;font-size:13px;touch-action:manipulation}
+  textarea{font-size:16px}
+  select,input{min-height:44px;font-size:16px!important}
+  .leaflet-control-zoom a{width:42px;height:42px;line-height:42px;font-size:22px}
+  .leaflet-control-attribution{font-size:8px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+<header class="header"><h1>Territory Tracker</h1><p id="currentTerritoryName">Republic / Cardale</p></header>
+<div id="banner"></div><div id="map"></div>
+<div class="bottom">
+<div class="actions">
+<button id="territories" class="blue">🗂️ Territories</button>
+<button id="houses" class="blue">🏠 Houses OFF</button>
+<button id="locate">📍 My Location</button>
+<button id="card">🗺️ Territory Card</button>
+<button id="editTerritory">✏️ Edit Territory</button>
+<button id="editDNW">🟨 Edit Do Not Work</button>
+<button id="addDNW">➕ Add Do Not Work Area</button>
+<button id="remaining" title="Show only houses not marked Worked">Remaining</button>
+</div>
+
+<div id="dataTransfer" style="margin-top:6px;display:flex;gap:5px;justify-content:center">
+<button id="exportData" type="button">💾 Export Map Data</button>
+<button id="cloudSync" type="button">☁️ Cloud Sync</button>
+<label for="importData" style="display:inline-block">
+  <span style="display:inline-block;background:#e5e5ea;border-radius:10px;padding:10px 8px;font-weight:700;cursor:pointer">📂 Import Map Data</span>
+  <input id="importData" type="file" accept=".json,application/json" style="display:none">
+</label>
+</div>
+
+<div class="legend">
+<span><i class="sw" style="background:#c7c7cc"></i>Unworked</span>
+<span><i class="sw" style="background:#34c759"></i>Worked</span>
+<span><i class="sw" style="background:#ffcc00"></i>Not Home</span>
+<span><i class="sw" style="background:#007aff"></i>Return</span>
+</div>
+</div></div>
+
+
+<section id="territoryManager">
+ <div class="tmSheet">
+  <div class="tmTitle">🗂️ Territories</div>
+  <div class="tmSub">Each territory is independent. Create, switch, rename, archive, delete, or import a territory without changing the others.</div>
+  <div class="tmBtns">
+   <button id="tmNew" class="primary">➕ New Territory</button>
+   <button id="tmImport">📂 Import as New</button>
+  </div>
+  <div id="tmNewForm" style="display:none;margin-top:9px;padding:10px;border:1px solid #d1d1d6;border-radius:12px;background:#f7f7f8">
+   <label class="small">Territory Name</label>
+   <input id="tmNewName" type="text" placeholder="e.g. Test Territory" autocomplete="off">
+   <label class="small" style="display:block;margin-top:7px">Starting Address</label>
+   <input id="tmNewAddress" type="text" placeholder="Enter an address to start the new territory" autocomplete="street-address">
+   <div class="tmBtns" style="margin-top:7px">
+    <button id="tmLocateNew" class="primary">📍 Locate Address</button>
+    <button id="tmCancelNew" style="background:#e5e5ea;color:#111">Cancel</button>
+   </div>
+   <div id="tmNewStatus" class="small" style="margin-top:6px"></div>
+  </div>
+  <div id="tmList" style="margin-top:8px"></div>
+  <div class="tmBtns">
+   <button id="tmRename">✏️ Rename Current</button>
+   <button id="tmArchive">📦 Archive Current</button>
+   <button id="tmClose" style="background:#e5e5ea;color:#111">Close</button>
+  </div>
+  <input id="tmImportFile" type="file" accept=".json,application/json" style="display:none">
+ </div>
+</section>
+
+<section id="syncSheet">
+  <div class="sheetTitle">☁️ Shared Cloud Sync</div>
+  <div id="syncStatus" class="small">Preparing secure connection…</div>
+
+  <div id="syncSetup">
+    <label class="small">Shared Territory Code</label>
+    <input id="syncCode" type="text" inputmode="text" autocapitalize="characters" autocomplete="off" maxlength="32" placeholder="e.g. JM-7K4Q-2P9X">
+    <div class="small" style="margin-top:6px">Use the same code on each device that should share these territories. Keep it private to your congregation.</div>
+    <button class="save" id="syncJoin">Join / Create Shared Space</button>
+    <button class="save" id="syncGenerate" style="margin-top:7px;background:#e5e5ea;color:#111">Generate New Code</button>
+  </div>
+
+  <div id="syncConnected" style="display:none">
+    <div id="syncSignedInBadge" class="small" style="margin:8px 0;font-weight:700">✓ Connected</div>
+    <div id="syncCodeDisplay" class="small" style="margin:8px 0;text-align:center;font-weight:700"></div>
+    <div class="small" style="margin-top:5px">This device keeps a local copy too. Cloud sync is manual so you stay in control of when changes are shared.</div>
+  </div>
+
+  <div id="syncActions" style="display:none;margin-top:9px">
+    <div style="display:flex;gap:7px">
+      <button class="save" id="syncSave" style="flex:1">☁️ Save All</button>
+      <button class="save" id="syncLoad" style="flex:1">⬇️ Load All</button>
+    </div>
+    <button class="save" id="syncDisconnect" style="margin-top:7px;background:#e5e5ea;color:#111">Disconnect Shared Space</button>
+    <div id="syncLast" class="small" style="margin-top:7px;text-align:center"></div>
+  </div>
+
+  <button class="save" id="syncClose" style="margin-top:8px;background:#e5e5ea;color:#111">Close</button>
+</section>
+
+<section id="editor">
+<div class="sheetTitle" id="editorTitle">Edit Territory</div>
+<div class="small" id="editorHelp">EDITING ORDER: 1) Add Point at each intersection. 2) Follow Road. 3) Tap two blue points in order. 4) Review the blue road preview. 5) Tap Add Road Segment.</div>
+<div id="territoryNameEditor" style="display:none;margin-top:6px;display:flex;gap:6px;align-items:end">
+  <div style="flex:1"><label class="small" for="territoryNameInput">Territory name</label><input id="territoryNameInput" type="text" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:8px" placeholder="Territory name"></div>
+  <button id="saveTerritoryName" style="white-space:nowrap">Save Name</button>
+</div>
+<div id="dnwChooser" style="display:none;margin-top:8px">
+<div class="small" style="margin-bottom:6px">Choose which Do Not Work area you want to edit.</div><label class="small" for="dnwSelect">Area to edit</label>
+<select id="dnwSelect" style="width:100%;padding:9px;border:1px solid #ccc;border-radius:9px"></select><label class="small" for="dnwName" style="display:block;margin-top:7px">Area name</label>
+<input id="dnwName" type="text" style="width:100%;padding:9px;border:1px solid #ccc;border-radius:9px" placeholder="e.g. Republic">
+<button id="saveDNWName" style="margin-top:7px">Save Area Name</button>
+</div>
+<div id="dnwAddHelp" class="small" style="display:none;margin-top:8px">
+<strong>Add Do Not Work Area:</strong> tap the map to place Point 1, Point 2, Point 3… in order. When you have at least 3 points, tap <strong>Finish Area</strong>.
+</div>
+<div class="editorBtns">
+<button id="followRoad">🛣️ Follow Road</button>
+<button id="addPoint">➕ Add Point</button>
+<button id="deleteSelected">🗑️ Delete Selected</button>
+<button id="deletePoint">➖ Delete Last</button>
+<button id="resetDNW">↩️ Reset</button>
+<button id="finishDNW" style="display:none">✅ Finish Area</button>
+<button id="deleteDNWArea" style="display:none">🗑️ Delete This Area</button>
+<button id="saveEdit">Save Changes</button>
+<button id="cancelEdit">Cancel</button>
+</div>
+<div id="roadControls" class="roadControls">
+<div class="small">FOLLOW ROAD: 1) Tap Point 1. 2) Tap Point 2. 3) Review the blue line. 4) Tap Add Road Segment.</div>
+<div id="roadName" style="font-weight:700;font-size:13px;margin-top:5px">Ready.</div>
+<div class="roadBtns">
+<button id="roadPreviewBtn">🔎 Preview Road</button><button id="roadAdd" class="primary" disabled style="opacity:.5">Add Road Segment</button>
+<button id="roadCancel">Cancel Road</button>
+</div>
+</div>
+</section>
+
+<section id="houseSheet">
+<div class="sheetTitle" id="houseTitle">Building</div>
+<div class="small">Status and notes are saved on this device and in the selected territory. Use Cloud Sync to share them.</div>
+<div class="statuses">
+<button data-status="worked" style="background:#dff5e4">🟢 Worked</button>
+<button data-status="nothome" style="background:#fff4c7">🟡 Not Home</button>
+<button data-status="return" style="background:#dceaff">🔵 Return</button>
+<button data-status="dnc" style="background:#eee">🚫 DNC</button>
+<button data-status="" style="background:#f2f2f7">⚪ Not Worked</button>
+</div>
+<textarea id="houseNote" placeholder="Add a note..."></textarea>
+<div style="display:flex;gap:7px;margin-top:7px"><button class="save" id="saveNote" style="flex:1">Save Note</button><button class="save" id="cancelHouse" style="flex:1;background:#e5e5ea;color:#111">Cancel</button></div>
+</section>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore-compat.js"></script>
+<script>
+(function(){
+'use strict';
+// Cross-device map-data transfer. Static GitHub Pages cannot directly share
+// localStorage between the PC and iPhone, so this provides a safe JSON export/import.
+function exportMapData(){
+  const payload={
+    version:1,
+    territory:territory,
+    dnw:dnw,
+    dnwNames:dnwNames,
+    records:records,
+    startPoint:ttCurrent()?.startPoint||null,
+    lastWorked:ttCurrent()?.lastWorked||null,
+    territoryName:ttCurrent()?.name||'Territory',
+    exportedAt:new Date().toISOString()
+  };
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='territory-tracker-map-data.json';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function importMapDataFile(file){
+  const reader=new FileReader();
+  reader.onload=()=>{
+    try{
+      const data=JSON.parse(reader.result);
+      if(!Array.isArray(data.territory)||!Array.isArray(data.dnw)) throw new Error('Invalid map data');
+      if(!confirm('Import this map data? This will replace the territory and Do Not Work boundaries on this device.')) return;
+      territory=data.territory;
+      dnw=data.dnw;
+      dnwNames=Array.isArray(data.dnwNames)?data.dnwNames:[];
+      records=data.records&&typeof data.records==='object'&&!Array.isArray(data.records)?data.records:{};
+      const current=ttCurrent();
+      if(current){
+        if(data.startPoint&&Number.isFinite(Number(data.startPoint.lat))&&Number.isFinite(Number(data.startPoint.lng))) current.startPoint={lat:Number(data.startPoint.lat),lng:Number(data.startPoint.lng),address:String(data.startPoint.address||'')};
+        else delete current.startPoint;
+        if(data.lastWorked) current.lastWorked=String(data.lastWorked);
+      }
+      while(dnwNames.length<dnw.length) dnwNames.push(`Do Not Work Area ${dnwNames.length+1}`);
+      dnwNames=dnwNames.slice(0,dnw.length);
+      localStorage.setItem('tt_geometry_stable',JSON.stringify({territory,dnw}));
+      localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
+      if(typeof ttSaveCurrent==='function')ttSaveCurrent();
+      location.reload();
+    }catch(e){alert('That file does not contain valid Territory Tracker map data.');}
+  };
+  reader.readAsText(file);
+}
+const map=L.map('map').setView([39.963,-79.878],14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap contributors'}).addTo(map);
+
+const defaultTerritory=[[39.982,-79.910],[39.981,-79.890],[39.978,-79.870],[39.973,-79.851],[39.963,-79.840],[39.950,-79.846],[39.939,-79.857],[39.941,-79.875],[39.946,-79.892],[39.952,-79.905],[39.967,-79.910]];
+const defaultDNW=[
+[[39.9717,-79.8965],[39.9708,-79.8870],[39.9668,-79.8860],[39.9618,-79.8885],[39.9602,-79.8990],[39.9650,-79.9020]],
+[[39.9610,-79.8830],[39.9558,-79.8760],[39.9500,-79.8825],[39.9525,-79.8890],[39.9585,-79.8880]]
+];
+let geometry=JSON.parse(localStorage.getItem('tt_geometry_stable')||'null')||{territory:defaultTerritory,dnw:defaultDNW};
+let territory=geometry.territory, dnw=geometry.dnw;
+let dnwNames=JSON.parse(localStorage.getItem('tt_dnw_names_v1')||'null');
+if(!Array.isArray(dnwNames)) dnwNames=[];
+while(dnwNames.length<dnw.length) dnwNames.push(`Do Not Work Area ${dnwNames.length+1}`);
+if(dnwNames.length>dnw.length) dnwNames=dnwNames.slice(0,dnw.length);
+
+// Clean up duplicate Do Not Work polygons left by earlier versions.
+// Two polygons are considered duplicates when their centers and areas are nearly identical.
+// Prefer a user-supplied name over the generic "Do Not Work Area N" name.
+function polygonStats(points){
+  if(!points || points.length<3) return null;
+  let area=0,cx=0,cy=0;
+  for(let i=0;i<points.length;i++){
+    const a=points[i],b=points[(i+1)%points.length];
+    const cross=a[1]*b[0]-b[1]*a[0];
+    area+=cross; cx+=(a[1]+b[1])*cross; cy+=(a[0]+b[0])*cross;
+  }
+  area=Math.abs(area)/2;
+  if(Math.abs(area)<1e-12){
+    return {lat:points.reduce((s,p)=>s+p[0],0)/points.length,lng:points.reduce((s,p)=>s+p[1],0)/points.length,area};
+  }
+  return {lat:cy/(6*(area*(area<0?-1:1))),lng:cx/(6*(area*(area<0?-1:1))),area};
+}
+function genericDNWName(n){
+  return !n || /^Do Not Work Area \d+$/i.test(n.trim());
+}
+function cleanDuplicateDNW(){
+  const keep=[], names=[];
+  for(let i=0;i<dnw.length;i++){
+    const s=polygonStats(dnw[i]);
+    if(!s){continue}
+    let duplicate=-1;
+    for(let j=0;j<keep.length;j++){
+      const t=polygonStats(keep[j]);
+      if(!t)continue;
+      const dist=Math.hypot((s.lat-t.lat)*111320,(s.lng-t.lng)*111320*Math.cos(s.lat*Math.PI/180));
+      const ratio=Math.max(s.area,t.area)/Math.max(1e-12,Math.min(s.area,t.area));
+      if(dist<35 && ratio<1.25){duplicate=j;break}
+    }
+    if(duplicate<0){
+      keep.push(dnw[i]); names.push(dnwNames[i]||`Do Not Work Area ${i+1}`);
+    }else if(genericDNWName(names[duplicate]) && !genericDNWName(dnwNames[i])){
+      keep[duplicate]=dnw[i]; names[duplicate]=dnwNames[i];
+    }
+  }
+  dnw=keep; dnwNames=names;
+  localStorage.setItem('tt_geometry_stable',JSON.stringify({territory,dnw}));
+  localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
+}
+cleanDuplicateDNW();
+const territoryLayer=L.polygon(territory,{color:'transparent',weight:0,fillColor:'#d71920',fillOpacity:.05}).addTo(map);
+let territoryOutline=L.polyline([], {color:'#d71920',weight:3,opacity:.9,interactive:false}).addTo(map);
+
+function offsetBoundary(points, meters=10){
+  if(points.length<3)return points;
+  // Determine polygon winding in lon/lat coordinates.
+  let area=0;
+  for(let i=0;i<points.length;i++){
+    const a=points[i],b=points[(i+1)%points.length];
+    area += a[1]*b[0]-b[1]*a[0];
+  }
+  const ccw=area>0;
+  const lat0=points.reduce((s,p)=>s+p[0],0)/points.length;
+  const metersLat=1/111320;
+  const metersLon=1/(111320*Math.cos(lat0*Math.PI/180));
+  const out=[];
+  for(let i=0;i<points.length;i++){
+    const prev=points[(i-1+points.length)%points.length], cur=points[i], next=points[(i+1)%points.length];
+    const e1=[next[1]-cur[1],next[0]-cur[0]];
+    const e0=[cur[1]-prev[1],cur[0]-prev[0]];
+    const len1=Math.hypot(e1[0],e1[1])||1, len0=Math.hypot(e0[0],e0[1])||1;
+    const n1=ccw?[e1[1]/len1,-e1[0]/len1]:[-e1[1]/len1,e1[0]/len1];
+    const n0=ccw?[e0[1]/len0,-e0[0]/len0]:[-e0[1]/len0,e0[0]/len0];
+    let nx=n0[0]+n1[0],ny=n0[1]+n1[1],nl=Math.hypot(nx,ny)||1;
+    nx/=nl;ny/=nl;
+    out.push([cur[0]+ny*meters*metersLat,cur[1]+nx*meters*metersLon]);
+  }
+  out.push(out[0]);
+  return out;
+}
+function refreshTerritoryDisplay(){
+  territoryLayer.setLatLngs(territory);
+  territoryOutline.setLatLngs(offsetBoundary(territory,10));
+  territoryOutline.bringToFront();
+}
+refreshTerritoryDisplay();
+
+const dnwLayers=[];
+const dnwLabelLayers=[];
+
+
+let housesVisible=true, remainingOnly=false, houseLayer=L.layerGroup().addTo(map);
+let records=JSON.parse(localStorage.getItem('tt_house_records_stable')||'{}');
+let houseCurrent=null;
+let editorTarget='territory', editMode=false, addMode=false, roadMode=false, addingDNW=false, activeDNWIndex=null;
+let handles=[], selectedPointIndices=[], roadPreview=null, pendingRoad=null, original=null;
+
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
+
+const $=id=>document.getElementById(id);
+
+$('saveTerritoryName').addEventListener('click',()=>{
+  if(editorTarget!=='territory')return;
+  const name=$('territoryNameInput').value.trim();
+  if(!name){banner('Enter a territory name first');return}
+  const t=ttCurrent&&ttCurrent();
+  if(!t){banner('No current territory');return}
+  t.name=name;
+  $('currentTerritoryName').textContent=name;
+  ttSaveRegistry();
+  banner('TERRITORY RENAMED: '+name);
+});
+
+// ---------------- Multi-territory foundation ----------------
+// This is built around the working v33 editor. The existing editor handlers
+// below are intentionally preserved rather than replaced.
+const TT_REG_KEY='tt_territories_v2';
+const TT_CURRENT_KEY='tt_current_territory_v2';
+let currentTerritoryId=localStorage.getItem(TT_CURRENT_KEY)||'';
+let territoryRegistry=[];
+function ttClone(v){return JSON.parse(JSON.stringify(v));}
+function ttNewId(){return 't_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);}
+function ttSaveRegistry(){localStorage.setItem(TT_REG_KEY,JSON.stringify(territoryRegistry));}
+function ttCurrent(){return territoryRegistry.find(t=>t.id===currentTerritoryId)||null;}
+function ttSaveCurrent(){
+  const t=ttCurrent(); if(!t)return;
+  t.territory=ttClone(territory); t.dnw=ttClone(dnw); t.dnwNames=ttClone(dnwNames); t.records=ttClone(records); t.updatedAt=new Date().toISOString();
+  ttSaveRegistry();
+}
+function ttLoadRecord(t){
+  territory=ttClone(t.territory||[]);
+  dnw=ttClone(t.dnw||[]);
+  dnwNames=ttClone(t.dnwNames||[]);
+  records=ttClone(t.records||{});
+  while(dnwNames.length<dnw.length) dnwNames.push(`Do Not Work Area ${dnwNames.length+1}`);
+  dnwNames=dnwNames.slice(0,dnw.length);
+  localStorage.setItem('tt_geometry_stable',JSON.stringify({territory,dnw}));
+  localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
+  localStorage.setItem('tt_house_records_stable',JSON.stringify(records));
+  $('currentTerritoryName').textContent=t.name;
+  // Each territory owns its own display state; new/blank territories start
+  // with houses visible.
+  if(!Array.isArray(territory) || territory.length===0){
+    housesVisible=true;
+    remainingOnly=false;
+    if(typeof updateHouseButton==='function') updateHouseButton();
+  }
+}
+function ttLoadRegistry(){
+  try{territoryRegistry=JSON.parse(localStorage.getItem(TT_REG_KEY)||'[]')}catch(e){territoryRegistry=[]}
+  if(!Array.isArray(territoryRegistry))territoryRegistry=[];
+  if(!territoryRegistry.length){
+    try{
+      const old=JSON.parse(localStorage.getItem('tt_territories_v1')||'[]');
+      if(Array.isArray(old)&&old.length)territoryRegistry=old;
+    }catch(e){}
+  }
+  if(!territoryRegistry.length){
+    const t={id:ttNewId(),name:'Republic / Cardale',archived:false,territory:ttClone(territory),dnw:ttClone(dnw),dnwNames:ttClone(dnwNames),records:ttClone(records),updatedAt:new Date().toISOString()};
+    territoryRegistry=[t]; currentTerritoryId=t.id; ttSaveRegistry();
+  }
+  if(!territoryRegistry.some(t=>t.id===currentTerritoryId)){
+    const active=territoryRegistry.find(t=>!t.archived)||territoryRegistry[0];
+    currentTerritoryId=active.id;
+  }
+  localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
+  const t=ttCurrent();
+  if(t){
+    ttLoadRecord(t);
+    setTimeout(()=>ttCenterOnTerritory(t),50);
+    setTimeout(()=>ttCenterOnTerritory(t),250);
+  }
+}
+function ttCenterOnTerritory(t){
+  if(!t)return false;
+  try{
+    map.invalidateSize(false);
+    if(Array.isArray(t.territory) && t.territory.length>=2){
+      const bounds=L.latLngBounds(t.territory.map(p=>[p[0],p[1]]));
+      if(!bounds.isValid())return false;
+      map.fitBounds(bounds,{padding:[28,28],maxZoom:17,animate:false});
+      return true;
+    }
+    if(t.startPoint && Number.isFinite(t.startPoint.lat) && Number.isFinite(t.startPoint.lng)){
+      map.setView([t.startPoint.lat,t.startPoint.lng],17,{animate:false});
+      return true;
+    }
+    return false;
+  }catch(e){
+    console.warn('Territory centering failed',e);
+    return false;
+  }
+}
+function ttRebuildMap(){
+  refreshTerritoryDisplay();
+  dnwLayers.forEach(l=>{if(l)map.removeLayer(l)});
+  dnwLabelLayers.forEach(l=>{if(l)map.removeLayer(l)});
+  dnwLayers.length=0; dnwLabelLayers.length=0;
+  dnw.forEach((_,i)=>ensureDNWLayer(i)); refreshAllDNWLabels();
+  houseLayer.clearLayers(); if(housesVisible)loadHouses();
+}
+function ttRenderManager(){
+  const list=$('tmList'); list.innerHTML='';
+  const active=territoryRegistry.filter(t=>!t.archived), archived=territoryRegistry.filter(t=>t.archived);
+  function group(title,items){
+    if(!items.length)return;
+    const h=document.createElement('div');h.className='small';h.style.cssText='font-weight:800;margin:9px 4px 3px';h.textContent=title;list.appendChild(h);
+    items.forEach(t=>{
+      const row=document.createElement('div');row.className='tmRow';
+      const name=document.createElement('div');name.className='tmRowName';name.textContent=t.name;
+      const meta=document.createElement('div');meta.className='tmMeta';meta.textContent=(t.id===currentTerritoryId?'CURRENT • ':'')+((t.territory||[]).length)+' boundary points';
+      const open=document.createElement('button');
+      open.textContent=t.archived?'↩️ Restore':'Open';
+      open.disabled=!t.archived && t.id===currentTerritoryId;
+      open.style.minWidth='72px';
+      open.onclick=()=>{ if(t.archived){ t.archived=false; ttSaveRegistry(); ttRenderManager(); } else ttSwitch(t.id); };
+
+      const del=document.createElement('button');
+      del.textContent='🗑️ Delete';
+      del.style.minWidth='78px';
+      del.style.background='#ff3b30';
+      del.style.color='#fff';
+      del.onclick=()=>ttDelete(t.id);
+
+      row.append(name,meta,open,del);list.appendChild(row);
+    });
+  }
+  group('ACTIVE TERRITORIES',active); group('ARCHIVED',archived);
+}
+function ttShowManager(){ttRenderManager();$('territoryManager').classList.add('show');}
+function ttHideManager(){$('territoryManager').classList.remove('show');}
+function ttSwitch(id){
+  const t=territoryRegistry.find(x=>x.id===id); if(!t)return;
+  if(editMode)closeEditor(false);
+  ttSaveCurrent();
+  currentTerritoryId=id; localStorage.setItem(TT_CURRENT_KEY,id);
+  ttLoadRecord(t);
+  ttRebuildMap();
+  ttHideManager();
+  // Center from the selected territory record itself, not from the
+  // map's previous position. Blank new territories have no bounds yet.
+  setTimeout(()=>ttCenterOnTerritory(t),50);
+  setTimeout(()=>ttCenterOnTerritory(t),250);
+  banner('TERRITORY: '+t.name); setTimeout(()=>banner(''),1600);
+}
+function ttShowNewForm(){
+  $('tmNewForm').style.display='block';
+  $('tmNewName').focus();
+  $('tmNewStatus').textContent='';
+}
+function ttHideNewForm(){
+  $('tmNewForm').style.display='none';
+  $('tmNewName').value='';
+  $('tmNewAddress').value='';
+  $('tmNewStatus').textContent='';
+}
+async function ttCreateTerritoryFromForm(){
+  const name=$('tmNewName').value.trim();
+  const address=$('tmNewAddress').value.trim();
+  if(!name){$('tmNewStatus').textContent='Enter a territory name.';return;}
+  if(!address){$('tmNewStatus').textContent='Enter a starting address.';return;}
+
+  const status=$('tmNewStatus');
+  const btn=$('tmLocateNew');
+  btn.disabled=true; status.textContent='Locating address…';
+
+  try{
+    const u='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&q='+encodeURIComponent(address);
+    const r=await fetch(u,{headers:{'Accept':'application/json'}});
+    if(!r.ok)throw Error('Geocoding request failed');
+    const hits=await r.json();
+    if(!hits?.length)throw Error('Address not found');
+
+    const lat=Number(hits[0].lat), lng=Number(hits[0].lon);
+    if(!Number.isFinite(lat)||!Number.isFinite(lng))throw Error('Invalid location');
+
+    ttSaveCurrent();
+    const t={
+      id:ttNewId(),name,archived:false,territory:[],dnw:[],dnwNames:[],records:{},
+      startPoint:{lat,lng,address:hits[0].display_name||address},
+      updatedAt:new Date().toISOString()
+    };
+    territoryRegistry.push(t);
+    currentTerritoryId=t.id;
+    localStorage.setItem(TT_CURRENT_KEY,t.id);
+    ttSaveRegistry();
+    ttLoadRecord(t);
+
+    // New territories always begin with houses visible. This keeps the
+    // button state and the actual map state synchronized.
+    housesVisible=true;
+    remainingOnly=false;
+    updateHouseButton();
+    ttRebuildMap();
+    ttHideNewForm();
+    ttHideManager();
+
+    map.setView([lat,lng],17,{animate:false});
+    setTimeout(()=>ttCenterOnTerritory(t),80);
+    setTimeout(()=>ttCenterOnTerritory(t),300);
+    $('editTerritory').click();
+  }catch(e){
+    status.textContent='Could not locate that address. Try a more complete address.';
+  }finally{
+    btn.disabled=false;
+  }
+}
+function ttNewTerritory(){
+  ttShowNewForm();
+}
+function ttRename(){
+  const t=ttCurrent(); if(!t)return;
+  const name=(prompt('New territory name:',t.name)||'').trim(); if(!name)return;
+  t.name=name; ttSaveCurrent(); $('currentTerritoryName').textContent=name; ttRenderManager();
+}
+function ttDelete(id){
+  const t=territoryRegistry.find(x=>x.id===id); if(!t)return;
+  const activeCount=territoryRegistry.filter(x=>!x.archived).length;
+  if(!t.archived && activeCount<=1){
+    alert('Keep at least one active territory.');
+    return;
+  }
+  if(!confirm(`Delete "${t.name}"? This permanently removes this territory and its local map data. This cannot be undone.`))return;
+
+  const wasCurrent=(id===currentTerritoryId);
+  territoryRegistry=territoryRegistry.filter(x=>x.id!==id);
+  ttSaveRegistry();
+
+  if(wasCurrent){
+    const next=territoryRegistry.find(x=>!x.archived)||territoryRegistry[0];
+    if(next){
+      currentTerritoryId=next.id;
+      localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
+      ttLoadRecord(next);
+      ttRebuildMap();
+      setTimeout(()=>ttCenterOnTerritory(next),50);
+      setTimeout(()=>ttCenterOnTerritory(next),250);
+      $('currentTerritoryName').textContent=next.name;
+    }
+  }
+  ttRenderManager();
+}
+function ttArchive(){
+  const t=ttCurrent(); if(!t)return;
+  if(territoryRegistry.filter(x=>!x.archived).length<=1){alert('Keep at least one active territory.');return}
+  if(!confirm('Archive '+t.name+'? You can restore it later.'))return;
+  t.archived=true; ttSaveCurrent();
+  const next=territoryRegistry.find(x=>!x.archived); currentTerritoryId=next.id; localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
+  ttLoadRecord(next); ttRebuildMap(); ttHideManager();
+}
+function ttImportAsNew(file){
+  const r=new FileReader(); r.onload=()=>{
+    try{
+      const d=JSON.parse(r.result);
+      if(!Array.isArray(d.territory)||!Array.isArray(d.dnw))throw Error();
+      const name=(prompt('Name for the imported territory:','Imported Territory')||'').trim(); if(!name)return;
+      ttSaveCurrent();
+      const t={id:ttNewId(),name,archived:false,territory:d.territory,dnw:d.dnw,dnwNames:Array.isArray(d.dnwNames)?d.dnwNames:[],records:d.records&&typeof d.records==='object'&&!Array.isArray(d.records)?d.records:{},updatedAt:new Date().toISOString()};
+      if(d.startPoint&&Number.isFinite(Number(d.startPoint.lat))&&Number.isFinite(Number(d.startPoint.lng)))t.startPoint={lat:Number(d.startPoint.lat),lng:Number(d.startPoint.lng),address:String(d.startPoint.address||'')};
+      if(d.lastWorked)t.lastWorked=String(d.lastWorked);
+      while(t.dnwNames.length<t.dnw.length)t.dnwNames.push(`Do Not Work Area ${t.dnwNames.length+1}`);
+      t.dnwNames=t.dnwNames.slice(0,t.dnw.length);
+      territoryRegistry.push(t); currentTerritoryId=t.id; localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
+      ttSaveRegistry(); ttLoadRecord(t); ttRebuildMap(); ttHideManager();
+    }catch(e){alert('That file does not contain valid Territory Tracker map data.')}
+  }; r.readAsText(file);
+}
+ttLoadRegistry();
+$('territories').addEventListener('click',ttShowManager);
+$('tmClose').addEventListener('click',ttHideManager);
+$('tmNew').addEventListener('click',ttNewTerritory);
+$('tmLocateNew').addEventListener('click',ttCreateTerritoryFromForm);
+$('tmCancelNew').addEventListener('click',ttHideNewForm);
+$('tmRename').addEventListener('click',ttRename);
+$('tmArchive').addEventListener('click',ttArchive);
+$('tmImport').addEventListener('click',()=>$('tmImportFile').click());
+$('tmImportFile').addEventListener('change',e=>{if(e.target.files?.[0])ttImportAsNew(e.target.files[0]);e.target.value=''});
+
+// ---------------- Firebase shared cloud sync ----------------
+// The shared code is the workspace identifier. Firebase Anonymous Auth supplies
+// a device/user identity; Firestore rules require authentication. The code is
+// deliberately high-entropy and should be shared only with the congregation.
+const firebaseConfig={
+  apiKey:"AIzaSyAp9VqlFaPaOYYMYPYRlIvEtugZQFEiBNk4",
+  authDomain:"territory-tracker-e44f2.firebaseapp.com",
+  projectId:"territory-tracker-e44f2",
+  storageBucket:"territory-tracker-e44f2.firebasestorage.app",
+  messagingSenderId:"108486226247",
+  appId:"1:108486226247:web:1d0b2b03144b7502a57122"
+};
+let firebaseReady=false;
+let firestore=null;
+let firebaseUser=null;
+let syncWorkspaceCode=localStorage.getItem('tt_firebase_workspace_code')||'';
+let syncBusy=false;
+let syncCloudLoaded=false;
+
+function normalizeWorkspaceCode(v){
+  return String(v||'').trim().toUpperCase().replace(/[^A-Z0-9-]/g,'').slice(0,32);
+}
+function workspaceIdFromCode(code){
+  // Use the normalized high-entropy shared code itself as the document ID.
+  // Firestore document IDs may safely contain letters, numbers, and hyphens.
+  // The code is the access key; do not share it publicly.
+  return code;
+}
+function generateWorkspaceCode(){
+  const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes=new Uint32Array(12);
+  crypto.getRandomValues(bytes);
+  let out='';
+  for(let i=0;i<bytes.length;i++) out+=alphabet[bytes[i]%alphabet.length];
+  return out.slice(0,4)+'-'+out.slice(4,8)+'-'+out.slice(8,12);
+}
+function syncSetStatus(t,ok=false){
+  $('syncStatus').textContent=t;
+  $('syncStatus').style.color=ok?'#16803c':'#444';
+}
+async function ensureFirebase(){
+  if(firebaseReady && firebaseUser && firestore)return true;
+  try{
+    if(!firebase.apps.length)firebase.initializeApp(firebaseConfig);
+    firestore=firebase.firestore();
+    await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+    if(!firebase.auth().currentUser) await firebase.auth().signInAnonymously();
+    firebaseUser=firebase.auth().currentUser;
+    firebaseReady=!!firebaseUser;
+    if(firebaseReady && $('syncSheet')) syncSetStatus('Firebase connected. Enter your shared territory code.',true);
+    return firebaseReady;
+  }catch(e){
+    console.error('Firebase initialization failed:',e);
+    if($('syncSheet')) syncSetStatus('Firebase could not connect. Enable Anonymous sign-in in Firebase Authentication.');
+    return false;
+  }
+}
+function syncShow(){
+  $('syncSheet').classList.add('show');
+  $('syncCode').value=syncWorkspaceCode;
+  $('syncCodeDisplay').textContent=syncWorkspaceCode?'Shared code: '+syncWorkspaceCode:'';
+  if(syncWorkspaceCode && firebaseUser) syncShowConnected();
+}
+function syncHide(){$('syncSheet').classList.remove('show')}
+function syncShowConnected(){
+  $('syncSetup').style.display='none';
+  $('syncConnected').style.display='block';
+  $('syncActions').style.display='block';
+  $('syncSave').disabled=!syncCloudLoaded;
+  $('syncSave').style.opacity=syncCloudLoaded?'1':'.55';
+  $('syncCodeDisplay').textContent='Shared code: '+syncWorkspaceCode;
+}
+function syncShowSetup(){
+  $('syncSetup').style.display='block';
+  $('syncConnected').style.display='none';
+  $('syncActions').style.display='none';
+  $('syncCode').value=syncWorkspaceCode;
+  syncCloudLoaded=false;
+}
+function syncCurrentTerritory(){
+  ttSaveCurrent();
+  const t=ttCurrent();
+  return t?sanitizeTerritoryRecord(t):null;
+}
+function validateTerritoryRecord(t){
+  return !!(t && typeof t==='object' && !Array.isArray(t) && typeof t.id==='string' && typeof t.name==='string' && Array.isArray(t.territory) && Array.isArray(t.dnw) && t.records && typeof t.records==='object' && !Array.isArray(t.records));
+}
+function sanitizeTerritoryRecord(t){
+  const out={
+    id:String(t.id),name:String(t.name||'Territory'),archived:!!t.archived,
+    territory:Array.isArray(t.territory)?ttClone(t.territory):[],
+    dnw:Array.isArray(t.dnw)?ttClone(t.dnw):[],
+    dnwNames:Array.isArray(t.dnwNames)?ttClone(t.dnwNames):[],
+    records:t.records&&typeof t.records==='object'?ttClone(t.records):{},
+    updatedAt:t.updatedAt||new Date().toISOString()
+  };
+  if(t.startPoint&&Number.isFinite(Number(t.startPoint.lat))&&Number.isFinite(Number(t.startPoint.lng))){
+    out.startPoint={lat:Number(t.startPoint.lat),lng:Number(t.startPoint.lng),address:String(t.startPoint.address||'')};
+  }
+  if(t.lastWorked)out.lastWorked=String(t.lastWorked);
+  return out;
+}
+function workspaceRef(){
+  if(!firestore||!syncWorkspaceCode)throw Error('No shared space selected');
+  return firestore.collection('workspaces').doc(workspaceIdFromCode(syncWorkspaceCode));
+}
+async function syncJoin(){
+  if(syncBusy)return;
+  const code=normalizeWorkspaceCode($('syncCode').value);
+  if(code.length<8){syncSetStatus('Enter a shared code of at least 8 characters.');return}
+  syncBusy=true;
+  try{
+    if(!(await ensureFirebase()))return;
+    syncWorkspaceCode=code;
+    localStorage.setItem('tt_firebase_workspace_code',code);
+    const ref=workspaceRef();
+    const snap=await ref.get();
+    if(!snap.exists){
+      await ref.set({schemaVersion:2,createdAt:firebase.firestore.FieldValue.serverTimestamp(),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),createdBy:firebaseUser.uid});
+      await writeTerritoriesInBatches(ref,territoryRegistry);
+      syncCloudLoaded=true;
+      syncSetStatus('Shared space created. Your current territories are now backed up.',true);
+      $('syncLast').textContent='Created: '+new Date().toLocaleString();
+    }else{
+      syncCloudLoaded=false;
+      const existing=await ref.collection('territories').get();
+      if(existing.empty){
+        await writeTerritoriesInBatches(ref,territoryRegistry);
+        syncCloudLoaded=true;
+        syncSetStatus('Connected and uploaded your current territories.',true);
+      }else{
+        const ok=confirm('A shared Territory Tracker already exists for this code. Load its territories onto this device now?');
+        if(ok){
+          await syncLoadCloud(true);
+        }else{
+          syncSetStatus('Connected. Load the shared territories before saving changes.',true);
+        }
+      }
+    }
+    syncShowConnected();
+  }catch(e){
+    console.error('Firebase join failed:',e);
+    syncSetStatus('Could not join that shared space: '+(e?.message||'unknown error'));
+  }finally{syncBusy=false}
+}
+function chunkArray(arr,size){
+  const out=[];
+  for(let i=0;i<arr.length;i+=size)out.push(arr.slice(i,i+size));
+  return out;
+}
+async function writeTerritoriesInBatches(ref,items){
+  const list=Array.isArray(items)?items:[];
+  for(const chunk of chunkArray(list,450)){
+    if(!chunk.length)continue;
+    const batch=firestore.batch();
+    chunk.forEach(t=>batch.set(ref.collection('territories').doc(String(t.id)),sanitizeTerritoryRecord(t),{merge:true}));
+    await batch.commit();
+  }
+}
+async function syncSaveCloud(){
+  if(syncBusy)return;
+  if(!syncCloudLoaded){syncSetStatus('Load the shared territories before saving changes.');return}
+  if(!(await ensureFirebase()))return;
+  if(!syncWorkspaceCode){syncSetStatus('Join a shared space first.');return}
+  syncBusy=true; syncSetStatus('Saving all territories to Firebase…');
+  try{
+    const ref=workspaceRef();
+    const existing=await ref.get();
+    if(!existing.exists)throw Error('Shared space no longer exists.');
+    await writeTerritoriesInBatches(ref,territoryRegistry);
+    await ref.set({schemaVersion:2,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:firebaseUser.uid},{merge:true});
+    $('syncLast').textContent='Last saved: '+new Date().toLocaleString();
+    syncSetStatus('All territories saved to Firebase.',true);
+  }catch(e){
+    console.error('Firebase save failed:',e);
+    syncSetStatus('Cloud save failed: '+(e?.message||'unknown error'));
+  }finally{syncBusy=false}
+}
+async function syncLoadCloud(fromJoin=false){
+  if(syncBusy&&!fromJoin)return;
+  if(!(await ensureFirebase()))return;
+  if(!syncWorkspaceCode){syncSetStatus('Join a shared space first.');return}
+  if(!fromJoin)syncBusy=true;
+  syncSetStatus('Loading all territories from Firebase…');
+  try{
+    const ref=workspaceRef();
+    const snap=await ref.get();
+    if(!snap.exists){syncSetStatus('No shared territory data exists for this code yet.');return}
+    const q=await ref.collection('territories').get();
+    if(q.empty){syncSetStatus('The shared space has no territory documents yet.');return}
+    const incoming=[];
+    q.forEach(doc=>{const t=doc.data();if(validateTerritoryRecord(t))incoming.push(sanitizeTerritoryRecord(t))});
+    if(!incoming.length){syncSetStatus('Cloud data is invalid. Nothing was changed.');return}
+    if(!fromJoin && !confirm('Load the shared territories and replace the territories currently on this device?'))return;
+    territoryRegistry=incoming;
+    currentTerritoryId=territoryRegistry.some(t=>t.id===currentTerritoryId&&!t.archived)
+      ?currentTerritoryId:(territoryRegistry.find(t=>!t.archived)||territoryRegistry[0]).id;
+    localStorage.setItem(TT_REG_KEY,JSON.stringify(territoryRegistry));
+    localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
+    const current=ttCurrent();
+    ttLoadRecord(current); ttRebuildMap();
+    setTimeout(()=>ttCenterOnTerritory(current),60);
+    setTimeout(()=>ttCenterOnTerritory(current),260);
+    localStorage.setItem('tt_last_cloud_sync',new Date().toISOString());
+    syncCloudLoaded=true;
+    $('syncLast').textContent='Last loaded: '+new Date().toLocaleString();
+    syncSetStatus('Shared territories loaded.',true);
+    if(!fromJoin)syncHide();
+  }catch(e){
+    console.error('Firebase load failed:',e);
+    syncSetStatus('Cloud load failed: '+(e?.message||'unknown error'));
+  }finally{if(!fromJoin)syncBusy=false}
+}
+function syncDisconnect(){
+  if(!confirm('Disconnect this device from the shared space? Your local territories will stay on this device.'))return;
+  syncWorkspaceCode='';
+  syncCloudLoaded=false;
+  localStorage.removeItem('tt_firebase_workspace_code');
+  syncShowSetup();
+  syncSetStatus('Disconnected. Local territory data is unchanged.');
+}
+$('cloudSync').addEventListener('click',syncShow);
+$('syncClose').addEventListener('click',syncHide);
+$('syncJoin').addEventListener('click',syncJoin);
+$('syncGenerate').addEventListener('click',()=>{$('syncCode').value=generateWorkspaceCode();$('syncCode').focus()});
+$('syncSave').addEventListener('click',syncSaveCloud);
+$('syncLoad').addEventListener('click',syncLoadCloud);
+$('syncDisconnect').addEventListener('click',syncDisconnect);
+
+// Initialize Firebase in the background. If Anonymous Auth is not enabled yet,
+// the rest of the app continues to work entirely from localStorage.
+ensureFirebase().catch(()=>{});
+
+$('exportData').addEventListener('click',exportMapData);
+$('importData').addEventListener('change',e=>{
+  if(e.target.files&&e.target.files[0]) importMapDataFile(e.target.files[0]);
+  e.target.value='';
+});
+
+function banner(t){$('banner').textContent=t;$('banner').style.display=t?'block':'none'}
+function currentDNWIndex(){
+  if(activeDNWIndex!==null)return activeDNWIndex;
+  if(editorTarget!=='territory')return Number(editorTarget.slice(3));
+  return null;
+}
+function currentArray(){
+  const idx=currentDNWIndex();
+  return editorTarget==='territory'?territory:dnw[idx];
+}
+function currentLayer(){
+  const idx=currentDNWIndex();
+  return editorTarget==='territory'?territoryLayer:dnwLayers[idx];
+}
+
+
+function polygonCenter(points){
+  if(!points || points.length<3)return null;
+  let a=0,cx=0,cy=0;
+  for(let i=0;i<points.length;i++){
+    const p=points[i],q=points[(i+1)%points.length];
+    const cross=p[1]*q[0]-q[1]*p[0];
+    a+=cross; cx+=(p[1]+q[1])*cross; cy+=(p[0]+q[0])*cross;
+  }
+  if(Math.abs(a)<1e-12){
+    return [points.reduce((s,p)=>s+p[0],0)/points.length,
+            points.reduce((s,p)=>s+p[1],0)/points.length];
+  }
+  return [cy/(3*a),cx/(3*a)];
+}
+function refreshDNWLabel(idx){
+  if(dnwLabelLayers[idx]) {
+    map.removeLayer(dnwLabelLayers[idx]);
+    dnwLabelLayers[idx]=null;
+  }
+  const pts=dnw[idx]||[];
+  if(pts.length<3) return;
+  const center=polygonCenter(pts);
+  if(!center) return;
+  const name=(dnwNames[idx]||`Do Not Work Area ${idx+1}`).trim();
+  dnwLabelLayers[idx]=L.marker(center,{
+    interactive:false,
+    keyboard:false,
+    zIndexOffset:10000,
+    icon:L.divIcon({
+      className:'dnw-center-label',
+      html:`<div>${escapeHtml(name)}</div>`,
+      iconSize:[0,0],
+      iconAnchor:[0,0]
+    })
+  }).addTo(map);
+}
+function refreshAllDNWLabels(){
+  dnw.forEach((_,i)=>refreshDNWLabel(i));
+}
+
+function ensureDNWLayer(idx){
+  if(dnwLayers[idx]) return dnwLayers[idx];
+  const layer=L.polygon(dnw[idx]||[],{
+    color:'#b8860b',weight:2,fillColor:'#ffd54f',fillOpacity:.48
+  }).addTo(map);
+  layer;
+  layer.on('click',()=>{
+    if(editMode)return;
+    activeDNWIndex=idx;
+    dnwLayers.forEach((x,i)=>{if(x)x.setStyle({weight:i===idx?4:2,fillOpacity:i===idx?.60:.38})});
+    banner('Do Not Work area selected — tap Edit Do Not Work');
+  });
+  dnwLayers[idx]=layer;
+  refreshDNWLabel(idx);
+  return layer;
+}
+
+dnw.forEach((_,i)=>ensureDNWLayer(i));
+refreshAllDNWLabels();
+function refreshDNWChooser(){
+  const sel=$('dnwSelect'); sel.innerHTML='';
+  dnw.forEach((_,i)=>{
+    const o=document.createElement('option');
+    o.value='dnw'+i; o.textContent=dnwNames[i]||`Do Not Work Area ${i+1}`;
+    sel.appendChild(o);
+  });
+  if(activeDNWIndex!==null && dnw[activeDNWIndex]) sel.value='dnw'+activeDNWIndex;
+}
+
+function clearHandles(){handles.forEach(h=>map.removeLayer(h));handles=[]}
+function makeHandles(){
+ clearHandles();
+ if(!editMode)return;
+ const arr=currentArray();
+ if(!arr || !Array.isArray(arr))return;
+ arr.forEach((p,i)=>{
+   const h=L.marker(p,{draggable:true,zIndexOffset:10000}).addTo(map);
+   h._pointIndex=i;
+   h.on('drag',e=>{
+     arr[i]=[e.latlng.lat,e.latlng.lng];
+     currentLayer().setLatLngs(arr);
+     if(editorTarget==='territory')refreshTerritoryDisplay();
+     else refreshDNWLabel(currentDNWIndex());
+   });
+   h.on('click',()=>{
+     if(!editMode)return;
+     if(roadMode){
+       // In Follow Road mode, select points in order.
+       if(selectedPointIndices.length===0){
+         selectedPointIndices=[i];
+         h.setOpacity(1);
+         $('roadName').textContent='Point 1 selected. Now tap Point 2.';
+         banner('FOLLOW ROAD: TAP POINT 2');
+         return;
+       }
+       if(selectedPointIndices.length===1){
+         if(i===selectedPointIndices[0]){
+           $('roadName').textContent='Choose a different point for Point 2.';
+           return;
+         }
+         selectedPointIndices.push(i);
+         prepareRoadPreview();
+         return;
+       }
+       // Third click starts a fresh pair.
+       selectedPointIndices=[i];
+       clearPointSelection();
+       h.setOpacity(1);
+       $('roadName').textContent='Point 1 selected. Now tap Point 2.';
+       banner('FOLLOW ROAD: TAP POINT 2');
+     } else {
+       // Freehand: clicking a point selects it for Delete Selected.
+       handles.forEach(x=>x.setOpacity(.65));
+       h.setOpacity(1);
+       window.selectedFreehandIndex=i;
+       handles.forEach((x,j)=>x.setOpacity(j===i?1:.65));
+       banner('POINT '+(i+1)+' SELECTED — DRAG IT OR DELETE SELECTED');
+     }
+   });
+   handles.push(h);
+ });
+ if(roadMode)handles.forEach((h,i)=>h.setOpacity(selectedPointIndices.includes(i)?1:.65));
+}
+function clearPointSelection(){
+ selectedPointIndices=[];
+ handles.forEach(h=>h.setOpacity(.65));
+}
+function stopRoadMode(){
+ roadMode=false; selectedPointIndices=[]; pendingRoad=null; $('roadAdd').disabled=true; $('roadAdd').style.opacity='.5';
+ if(roadPreview){map.removeLayer(roadPreview);roadPreview=null}
+ $('roadControls').style.display='none';
+ handles.forEach(h=>h.setOpacity(1));
+}
+function closeEditor(save){
+  if(!save && original){
+    territory=original.territory;
+    dnw=original.dnw;
+    dnwNames=original.dnwNames||dnwNames;
+    refreshTerritoryDisplay();
+    dnwLayers.forEach(layer=>{if(layer)map.removeLayer(layer)});
+    dnwLabelLayers.forEach(layer=>{if(layer)map.removeLayer(layer)});
+    dnwLayers.length=0;
+    dnwLabelLayers.length=0;
+    dnw.forEach((_,i)=>ensureDNWLayer(i));
+    refreshAllDNWLabels();
+    localStorage.setItem('tt_geometry_stable',JSON.stringify({territory,dnw}));
+    localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
+  }else if(save){
+    localStorage.setItem('tt_geometry_stable',JSON.stringify({territory,dnw}));
+    localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
+    if(typeof ttSaveCurrent==='function')ttSaveCurrent();
+  }
+  stopRoadMode();
+  clearHandles();
+  editMode=false; addMode=false; addingDNW=false; activeDNWIndex=null; original=null;
+  $('editor').classList.remove('show');document.body.classList.remove('editor-open');
+  $('dnwChooser').style.display='none';
+  if($('territoryNameEditor'))$('territoryNameEditor').style.display='none';
+  dnwLayers.forEach(layer=>{
+    if(layer)layer.setStyle({color:'#b8860b',weight:2,fillColor:'#ffd54f',fillOpacity:.48});
+  });
+  banner('');
+  // The editor suppresses house loading. Refresh once it is fully closed,
+  // especially for newly created territories.
+  if(housesVisible) setTimeout(()=>loadHouses(),120);
+}
+$('saveEdit').addEventListener('click',()=>closeEditor(true));
+$('cancelEdit').addEventListener('click',()=>closeEditor(false));
+
+$('editTerritory').addEventListener('click',()=>{
+  stopRoadMode(); clearHandles();
+  editorTarget='territory'; editMode=true; addMode=false; addingDNW=false; activeDNWIndex=null;
+  original=JSON.parse(JSON.stringify({territory,dnw,dnwNames}));
+  $('editor').classList.add('show');document.body.classList.add('editor-open');
+  $('dnwChooser').style.display='none';
+  $('editorTitle').textContent='Edit Territory';
+  $('territoryNameEditor').style.display='flex';
+  const current=ttCurrent&&ttCurrent();
+  $('territoryNameInput').value=current&&current.name ? current.name : ($('currentTerritoryName').textContent||'');
+  $('followRoad').classList.remove('active');
+  if(!Array.isArray(territory)||territory.length===0){
+    addMode=true;
+    $('editorHelp').textContent='NEW TERRITORY: Tap the map to place boundary points. Add at least 3 points. Then you can drag, add, delete, or use Follow Road.';
+    banner('NEW TERRITORY: TAP THE MAP TO PLACE POINT 1');
+  }else{
+    $('editorHelp').textContent='Edit the red territory boundary. Drag points, add points, or use Follow Road.';
+    makeHandles();
+    banner('EDITING TERRITORY');
+  }
+});
+function setActiveDNW(idx){
+  if(idx<0 || idx>=dnw.length)return;
+  activeDNWIndex=idx;
+  editorTarget='dnw'+idx;
+  addingDNW=false; editMode=true; addMode=false; roadMode=false;
+  ensureDNWLayer(idx);
+  refreshDNWChooser();
+  $('dnwChooser').style.display='block';
+  $('dnwAddHelp').style.display='none';
+  $('finishDNW').style.display='none';
+  $('deleteDNWArea').style.display='inline-block';
+  $('editorTitle').textContent=`Edit Do Not Work — ${dnwNames[idx]||`Area ${idx+1}`}`;
+  $('dnwName').value=dnwNames[idx]||`Do Not Work Area ${idx+1}`;
+  $('editorHelp').textContent='You are editing ONLY this Do Not Work area. The blue points belong to the selected area.';
+  dnwLayers.forEach((layer,i)=>{ if(layer) layer.setStyle({fillOpacity:i===idx?.62:.10,weight:i===idx?3:1}); });
+  makeHandles();
+  banner(`EDITING DO NOT WORK AREA ${idx+1}`);
+}
+
+$('editDNW').addEventListener('click',()=>{
+  if($('territoryNameEditor'))$('territoryNameEditor').style.display='none';
+  original=JSON.parse(JSON.stringify({territory,dnw}));
+  $('editor').classList.add('show');document.body.classList.add('editor-open');
+  if(!dnw.length){ beginAddDNW(); return; }
+  activeDNWIndex = activeDNWIndex!==null && activeDNWIndex<dnw.length ? activeDNWIndex : dnw.length-1;
+  setActiveDNW(activeDNWIndex);
+});
+
+$('dnwSelect').addEventListener('change',()=>{
+  if(!editMode)return;
+  setActiveDNW(Number($('dnwSelect').value.slice(3)));
+});
+
+$('saveDNWName').addEventListener('click',()=>{
+  if(activeDNWIndex===null)return;
+  const name=$('dnwName').value.trim();
+  if(!name){banner('Enter a name first');return}
+  dnwNames[activeDNWIndex]=name;
+  localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
+  refreshDNWLabel(activeDNWIndex);
+  refreshDNWChooser();
+  $('dnwSelect').value='dnw'+activeDNWIndex;
+  $('editorTitle').textContent=`Edit Do Not Work — ${name}`;
+  banner(`AREA RENAMED: ${name}`);
+});
+
+function beginAddDNW(){
+  original=JSON.parse(JSON.stringify({territory,dnw}));
+  editMode=true; addingDNW=true; addMode=false; roadMode=false;
+  const idx=dnw.length;
+  dnw.push([]); dnwNames.push(`Do Not Work Area ${idx+1}`);
+  localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
+  activeDNWIndex=idx; editorTarget='dnw'+idx;
+  ensureDNWLayer(idx);
+  $('editor').classList.add('show');document.body.classList.add('editor-open');
+  $('dnwChooser').style.display='none';
+  $('dnwAddHelp').style.display='block';
+  $('finishDNW').style.display='inline-block';
+  $('deleteDNWArea').style.display='inline-block';
+  $('editorTitle').textContent=`Add Do Not Work Area ${idx+1}`;
+  $('dnwName').value=dnwNames[idx];
+  $('editorHelp').textContent='Tap the map to place each boundary point. Add at least 3 points, then tap Finish Area.';
+  clearHandles();
+  banner('ADD DO NOT WORK AREA: TAP POINT 1');
+}
+
+$('addDNW').addEventListener('click',beginAddDNW);
+
+$('finishDNW').addEventListener('click',()=>{
+  if(!addingDNW)return;
+  const idx=activeDNWIndex,arr=dnw[idx];
+  if(arr.length<3){
+    banner('ADD AT LEAST 3 POINTS BEFORE FINISHING THE AREA');
+    return;
+  }
+  addingDNW=false;
+  $('finishDNW').style.display='none';
+  $('dnwChooser').style.display='block';
+  $('deleteDNWArea').style.display=dnw.length>1?'inline-block':'none';
+  refreshDNWChooser();
+  makeHandles();
+  banner(`DO NOT WORK AREA ${idx+1} CREATED — YOU CAN NOW DRAG ITS BLUE POINTS`);
+});
+
+$('deleteDNWArea').addEventListener('click',()=>{
+  if(activeDNWIndex===null || activeDNWIndex<0 || activeDNWIndex>=dnw.length){
+    banner('SELECT A DO NOT WORK AREA FIRST'); return;
+  }
+  const idx=activeDNWIndex;
+  if(!confirm(`Delete Do Not Work Area ${idx+1}?`)) return;
+
+  if(dnwLayers[idx]) map.removeLayer(dnwLayers[idx]);
+  if(dnwLabelLayers[idx]) map.removeLayer(dnwLabelLayers[idx]);
+  dnw.splice(idx,1); dnwLayers.splice(idx,1); dnwLabelLayers.splice(idx,1); dnwNames.splice(idx,1); localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
+
+  dnwLayers.forEach((layer,i)=>{
+    if(layer){
+      layer;
+      
+      layer.setLatLngs(dnw[i]||[]);
+      refreshDNWLabel(i);
+    }
+  });
+
+  activeDNWIndex=dnw.length ? Math.min(idx,dnw.length-1) : null;
+  clearHandles();
+
+  if(activeDNWIndex===null){
+    $('dnwChooser').style.display='none';
+    $('deleteDNWArea').style.display='none';
+    $('editorTitle').textContent='Do Not Work';
+    banner('DO NOT WORK AREA DELETED');
+  }else{
+    refreshDNWChooser();
+    setActiveDNW(activeDNWIndex);
+    banner('DO NOT WORK AREA DELETED');
+  }
+});
+
+$('addPoint').addEventListener('click',()=>{
+ if(!editMode)return;
+ stopRoadMode();addMode=true;window.selectedFreehandIndex=null;makeHandles();
+ $('addPoint').classList.add('active');
+ banner('ADD POINT: TAP EXACTLY WHERE YOU WANT THE BLUE POINT');
+});
+
+$('deleteSelected').addEventListener('click',()=>{
+ $('deleteSelected').classList.add('pulse');setTimeout(()=>$('deleteSelected').classList.remove('pulse'),220);
+ if(!editMode)return;
+ let idx=window.selectedFreehandIndex;
+ if(roadMode && selectedPointIndices.length===1) idx=selectedPointIndices[0];
+ if(idx===null || idx===undefined){
+   $('editorHelp').textContent='First tap the blue point you want to delete, then tap Delete Selected.';
+   banner('SELECT A BLUE POINT FIRST');
+   return;
+ }
+ const arr=currentArray();
+ if(arr.length<=3){banner('A BOUNDARY NEEDS AT LEAST 3 POINTS');return}
+ arr.splice(idx,1);currentLayer().setLatLngs(arr);
+     if(editorTarget==='territory')refreshTerritoryDisplay();
+     else refreshDNWLabel(currentDNWIndex());
+ window.selectedFreehandIndex=null;selectedPointIndices=[];
+ makeHandles();banner('POINT DELETED');
+});
+
+$('deletePoint').addEventListener('click',()=>{
+ $('deletePoint').classList.add('pulse');setTimeout(()=>$('deletePoint').classList.remove('pulse'),220);
+ if(!editMode)return;
+ const arr=currentArray();if(arr.length<=3){banner('A BOUNDARY NEEDS AT LEAST 3 POINTS');return}
+ arr.pop();currentLayer().setLatLngs(arr);
+     if(editorTarget==='territory')refreshTerritoryDisplay();
+     else refreshDNWLabel(currentDNWIndex());window.selectedFreehandIndex=null;makeHandles();
+ banner('LAST POINT DELETED');
+});
+$('saveEdit').addEventListener('click',()=>closeEditor(true));
+$('cancelEdit').addEventListener('click',()=>closeEditor(false));
+
+function nearestSegmentIndex(arr,p){
+ let best=Infinity,idx=0;
+ for(let i=0;i<arr.length;i++){
+  const a=arr[i],b=arr[(i+1)%arr.length],dx=b[1]-a[1],dy=b[0]-a[0],den=dx*dx+dy*dy;
+  let t=den?((p[1]-a[1])*dx+(p[0]-a[0])*dy)/den:0;t=Math.max(0,Math.min(1,t));
+  const q=[a[0]+t*dy,a[1]+t*dx],d=(p[0]-q[0])**2+(p[1]-q[1])**2;
+  if(d<best){best=d;idx=i}
+ }
+ return idx;
+}
+map.on('click',e=>{
+ if(!editMode)return;
+
+ if(addingDNW){
+   if(activeDNWIndex===null)return;
+   const p=[e.latlng.lat,e.latlng.lng];
+   dnw[activeDNWIndex].push(p);
+   dnwLayers[activeDNWIndex].setLatLngs(dnw[activeDNWIndex]);
+   refreshDNWLabel(activeDNWIndex);
+   makeHandles();
+   banner(`NEW DO NOT WORK AREA: POINT ${dnw[activeDNWIndex].length} ADDED`);
+   return;
+ }
+
+ if(addMode){
+   const idx=currentDNWIndex();
+   const arr=currentArray();
+   if(!arr)return;
+   const p=[e.latlng.lat,e.latlng.lng];
+   const insertAt=arr.length<3 ? arr.length : nearestSegmentIndex(arr,p)+1;
+   arr.splice(insertAt,0,p);
+   currentLayer().setLatLngs(arr);
+   if(editorTarget!=='territory')refreshDNWLabel(currentDNWIndex());
+   addMode=false;
+   $('addPoint').classList.remove('active');
+   makeHandles();
+   banner(`POINT ADDED TO ${editorTarget==='territory'?'TERRITORY':'DO NOT WORK AREA '+(idx+1)}`);
+   return;
+ }
+});
+$('followRoad').addEventListener('click',()=>{
+ if(!editMode)return;
+ addMode=false;roadMode=true;selectedPointIndices=[];pendingRoad=null;
+ if(roadPreview){map.removeLayer(roadPreview);roadPreview=null}
+ $('roadControls').style.display='block';
+ $('roadAdd').disabled=true; $('roadAdd').style.opacity='.5';
+ $('followRoad').classList.add('active');
+ makeHandles();
+ $('roadName').textContent='STEP 1: Tap the first blue point.';
+ banner('FOLLOW ROAD: TAP POINT 1');
+});
+
+$('roadCancel').addEventListener('click',()=>{
+ stopRoadMode();makeHandles();banner('FREEHAND EDITING');
+});
+
+async function snapPoint(lat,lng){
+ const r=await fetch(`https://router.project-osrm.org/nearest/v1/driving/${lng},${lat}.json?number=1`);
+ if(!r.ok)throw Error();const j=await r.json();if(j.code!=='Ok'||!j.waypoints?.length)throw Error();
+ return {lat:j.waypoints[0].location[1],lng:j.waypoints[0].location[0]};
+}
+async function routeSegment(a,b){
+ const r=await fetch(`https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}.json?overview=full&geometries=geojson`);
+ if(!r.ok)throw Error();const j=await r.json();if(j.code!=='Ok'||!j.routes?.length)throw Error();return j.routes[0];
+}
+async function roadLabel(lat,lng){
+ try{const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=18`);const j=await r.json();return j.address?.road||''}catch(e){return ''}
+}
+
+async function prepareRoadPreview(){
+ const arr=currentArray(),aIndex=selectedPointIndices[0],bIndex=selectedPointIndices[1];
+ const adjacent=(Math.abs(aIndex-bIndex)===1)||(Math.abs(aIndex-bIndex)===arr.length-1);
+ if(!adjacent){
+  $('roadName').textContent='Those two points are not adjacent in the boundary. Tap the next point in order.';
+  banner('FOLLOW ROAD: POINTS MUST BE NEXT TO EACH OTHER');
+  selectedPointIndices.pop();
+  return;
+ }
+
+ const a=arr[aIndex], b=arr[bIndex];
+ $('roadName').textContent='Finding the road between Point 1 and Point 2…';
+ banner('FOLLOW ROAD: FINDING ROAD…');
+
+ try{
+  // First try the exact points the user selected. This avoids the previous
+  // failure where the nearest-road snap moved a point to an unintended road.
+  let route=null;
+  try{
+   const r=await fetch(`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}.json?overview=full&geometries=geojson&steps=true`);
+   if(r.ok){
+    const j=await r.json();
+    if(j.code==='Ok' && j.routes?.length) route=j.routes[0];
+   }
+  }catch(e){}
+
+  // If the exact points do not route, try snapping each point to the nearest road.
+  if(!route){
+   const sa=await snapPoint(a[0],a[1]), sb=await snapPoint(b[0],b[1]);
+   route=await routeSegment(sa,sb);
+  }
+
+  if(!route || !route.geometry?.coordinates?.length) throw Error('No road geometry');
+  if(route.distance>5000){
+   $('roadName').textContent='The road route is over 5 km. Check that Points 1 and 2 are on the intended nearby road.';
+   banner('FOLLOW ROAD: ROUTE TOO LONG');
+   return;
+  }
+
+  const coords=route.geometry.coordinates.map(x=>[x[1],x[0]]);
+  if(roadPreview)map.removeLayer(roadPreview);
+  roadPreview=L.polyline(coords,{
+    color:'#007aff',weight:8,opacity:1,dashArray:'12 8',
+    lineCap:'round',lineJoin:'round',interactive:false
+  }).addTo(map);
+  roadPreview.bringToFront();
+
+  pendingRoad={aIndex,bIndex,coords}; $('roadAdd').disabled=false; $('roadAdd').style.opacity='1';
+  const name=await roadLabel(a[0],a[1]);
+  $('roadName').textContent=name
+    ? `BLUE PREVIEW: ${name} • ${Math.round(route.distance)} m`
+    : `BLUE PREVIEW READY • ${Math.round(route.distance)} m`;
+  banner('STEP 3 — REVIEW BLUE LINE, THEN TAP ADD ROAD SEGMENT');
+ }catch(e){
+  console.error('Follow Road preview failed:',e);
+  $('roadName').textContent='No road preview could be created. Try points directly on the road/intersection.';
+  banner('FOLLOW ROAD: COULD NOT FIND ROAD');
+ }
+}
+
+$('roadPreviewBtn').addEventListener('click',()=>{if(selectedPointIndices.length===2)prepareRoadPreview();else banner('FOLLOW ROAD: SELECT TWO BLUE POINTS FIRST')});
+
+$('roadAdd').addEventListener('click',()=>{
+ if(!pendingRoad){
+  $('roadName').textContent='No road preview yet. Tap two adjacent blue points first.';
+  banner('FOLLOW ROAD: SELECT TWO POINTS FIRST');
+  return;
+ }
+ const arr=currentArray(),a=pendingRoad.aIndex,b=pendingRoad.bIndex;
+ let path=pendingRoad.coords.slice();
+
+ // Determine which direction the route runs.
+ const da=Math.hypot(path[0][0]-arr[a][0],path[0][1]-arr[a][1]);
+ const db=Math.hypot(path[path.length-1][0]-arr[a][0],path[path.length-1][1]-arr[a][1]);
+ if(db<da)path.reverse();
+
+ // Replace only the direct edge between the two adjacent points.
+ if((b===a+1) || (a===arr.length-1 && b===0)){
+   if(b===a+1){
+     const newArr=arr.slice(0,a+1).concat(path.slice(1,-1),arr.slice(b));
+     if(editorTarget==='territory')territory=newArr;else dnw[Number(editorTarget.slice(3))]=newArr;
+   }else{
+     // Edge from last -> first: rotate the polygon so the edge is internal.
+     const rotated=arr.slice(a).concat(arr.slice(0,a+1));
+     const p=path.slice();
+     const first=rotated[0];
+     const dA=Math.hypot(p[0][0]-first[0],p[0][1]-first[1]);
+     const dB=Math.hypot(p[p.length-1][0]-first[0],p[p.length-1][1]-first[1]);
+     if(dB<dA)p.reverse();
+     const newRot=rotated.slice(0,1).concat(p.slice(1,-1),rotated.slice(1));
+     const cut=newRot.length-1;
+     const newArr=newRot.slice(cut).concat(newRot.slice(0,cut));
+     if(editorTarget==='territory')territory=newArr;else dnw[Number(editorTarget.slice(3))]=newArr;
+   }
+ }else if(a===b+1){
+   // Reverse order and reuse the adjacent-edge case.
+   selectedPointIndices=[b,a];
+   pendingRoad={aIndex:b,bIndex:a,coords:path.slice().reverse()};
+   $('roadName').textContent='Reverse the selected points: tap Add Road Segment again.';
+   return;
+ }
+ currentLayer().setLatLngs(currentArray()); if(editorTarget==='territory')refreshTerritoryDisplay();
+ if(roadPreview){map.removeLayer(roadPreview);roadPreview=null}
+ pendingRoad=null;
+ selectedPointIndices=[];
+ makeHandles();
+ $('roadName').textContent='Segment added. STEP 1: tap the next blue point.';
+ banner('FOLLOW ROAD: TAP THE NEXT POINT');
+});
+
+function buildingStyle(status){
+ return {color:'#666',weight:1,fillColor:status==='worked'?'#34c759':status==='nothome'?'#ffcc00':status==='return'?'#007aff':status==='dnc'?'#8e8e93':'#c7c7cc',fillOpacity:status?.62:.16};
+}
+async function loadHouses(){
+ if(!housesVisible){houseLayer.clearLayers();return}
+ const b=map.getBounds(),g=encodeURIComponent(JSON.stringify({
+   xmin:b.getWest()-.003,ymin:b.getSouth()-.003,
+   xmax:b.getEast()+.003,ymax:b.getNorth()+.003,
+   spatialReference:{wkid:4326}
+ }));
+ const url=`https://services.arcgis.com/P3ePLMYs2RVChkJx/ArcGIS/rest/services/MSBFP2/FeatureServer/0/query?f=geojson&where=1%3D1&returnGeometry=true&outFields=OBJECTID&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&geometry=${g}&outSR=4326&resultRecordCount=2000`;
+ try{
+  const r=await fetch(url);if(!r.ok)throw Error();
+  const gj=await r.json();
+  houseLayer.clearLayers();
+
+  // "Remaining" means buildings that have NOT been marked Worked.
+  if(remainingOnly){
+    gj.features=gj.features.filter(f=>records[String(f.properties.OBJECTID)]?.status!=='worked');
+  }
+
+  L.geoJSON(gj,{
+    style:f=>buildingStyle(records[String(f.properties.OBJECTID)]?.status),
+    onEachFeature:(f,l)=>l.on('click',()=>openHouse(String(f.properties.OBJECTID),f))
+  }).addTo(houseLayer);
+ }catch(e){console.warn('Building layer unavailable',e)}
+}
+
+let houseCurrentPoint=null;
+
+
+
+async function reverseHouseAddress(lat,lng){
+  try{
+    const u=`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`;
+    const r=await fetch(u,{headers:{'Accept':'application/json'}});
+    if(!r.ok)throw Error();
+    const d=await r.json();
+    return d?.display_name || '';
+  }catch(e){
+    return '';
+  }
+}
+
+function openHouse(id, feature){
+ houseCurrent=id;
+ houseCurrentPoint=null;
+ $('houseTitle').textContent='House';
+ $('houseNote').value=records[id]?.note||'';
+ $('houseSheet').classList.add('show');
+
+ const center=L.geoJSON(feature).getBounds().getCenter();
+ houseCurrentPoint={lat:center.lat,lng:center.lng};
+ reverseHouseAddress(center.lat,center.lng).then(addr=>{
+   if(houseCurrent!==id || !houseCurrentPoint)return;
+   if(addr){
+     $('houseTitle').textContent='🏠 '+addr;
+   }else{
+     $('houseTitle').textContent='🏠 House';
+   }
+ });
+}
+
+document.querySelectorAll('[data-status]').forEach(b=>b.addEventListener('click',()=>{
+ if(!houseCurrent)return;
+ const status=b.dataset.status;
+ const rec={...(records[houseCurrent]||{})};
+ if(status) rec.status=status;
+ else delete rec.status;
+ records[houseCurrent]=rec;
+ localStorage.setItem('tt_house_records_stable',JSON.stringify(records));
+ if(typeof ttSaveCurrent==='function')ttSaveCurrent();
+ $('houseSheet').classList.remove('show');
+ houseCurrent=null;
+ houseCurrentPoint=null;
+ loadHouses();
+}));
+$('saveNote').addEventListener('click',()=>{
+ if(!houseCurrent)return;records[houseCurrent]={...(records[houseCurrent]||{}),note:$('houseNote').value};localStorage.setItem('tt_house_records_stable',JSON.stringify(records));if(typeof ttSaveCurrent==='function')ttSaveCurrent();$('houseSheet').classList.remove('show');
+});
+$('cancelHouse').addEventListener('click',()=>{
+ houseCurrent=null;
+ houseCurrentPoint=null;
+ $('houseSheet').classList.remove('show');
+});
+
+function updateHouseButton(){
+  $('houses').textContent=housesVisible?'🏠 Houses OFF':'🏠 Houses ON';
+  $('houses').classList.toggle('blue',housesVisible);
+}
+$('houses').addEventListener('click',()=>{
+ housesVisible=!housesVisible;
+ updateHouseButton();
+ loadHouses();
+});
+$('remaining').addEventListener('click',()=>{
+  remainingOnly=!remainingOnly;
+  if(!housesVisible){
+    housesVisible=true;
+    updateHouseButton();
+  }
+  $('remaining').textContent=remainingOnly?'All Houses':'Remaining';
+  $('remaining').classList.toggle('blue',remainingOnly);
+  loadHouses();
+  banner(remainingOnly?'SHOWING REMAINING HOUSES — WORKED HOUSES HIDDEN':'SHOWING ALL HOUSES');
+});
+$('remaining').textContent='Remaining';
+updateHouseButton();
+$('locate').addEventListener('click',()=>map.locate({setView:true,maxZoom:18,enableHighAccuracy:true}));
+map.on('locationfound',e=>L.circleMarker(e.latlng,{radius:8,color:'#fff',weight:3,fillColor:'#007aff',fillOpacity:1}).addTo(map).bindPopup('You are here').openPopup());
+
+let cardOverlay=null;
+let cardMode=false;
+let savedMapView=null;
+const cardBounds=[[39.946,-79.907],[39.982,-79.842]];
+
+
+function setCardLabelVisibility(visible){
+  if(typeof dnwLabelLayers==='undefined') return;
+  dnwLabelLayers.forEach(function(layer){
+    if(!layer) return;
+    if(visible){
+      if(!map.hasLayer(layer)) layer.addTo(map);
+    }else{
+      if(map.hasLayer(layer)) map.removeLayer(layer);
+    }
+  });
+}
+
+function enterCardMode(){
+  if(cardMode)return;
+  cardMode=true;
+  savedMapView={center:map.getCenter(),zoom:map.getZoom()};
+  setCardLabelVisibility(false);
+  // Show the original territory card as an opaque card, not as a faded overlay.
+  cardOverlay=L.imageOverlay('TerritoryTracker_card_rectified.jpg',cardBounds,{
+    opacity:1,
+    interactive:false,
+    zIndex:1000
+  }).addTo(map);
+  cardOverlay.bringToFront();
+  map.fitBounds(cardBounds,{padding:[8,8]});
+  $('card').textContent='🗺️ Live Map';
+  banner('TERRITORY CARD');
+}
+
+function enterLiveMapMode(){
+  if(!cardMode)return;
+  cardMode=false;
+  if(cardOverlay){
+    map.removeLayer(cardOverlay);
+    cardOverlay=null;
+  }
+  setCardLabelVisibility(true);
+  $('card').textContent='🗺️ Territory Card';
+  banner('');
+  if(savedMapView){
+    map.setView(savedMapView.center,savedMapView.zoom,{animate:false});
+    savedMapView=null;
+  }
+  if(housesVisible&&!editMode)loadHouses();
+}
+
+$('card').addEventListener('click',()=>{
+  if(cardMode) enterLiveMapMode();
+  else enterCardMode();
+});
+
+$('resetDNW').addEventListener('click',()=>{
+ if(!editMode)return;
+ $('resetDNW').classList.add('pulse'); setTimeout(()=>$('resetDNW').classList.remove('pulse'),220);
+ if(editorTarget==='territory'){
+   territory=JSON.parse(JSON.stringify(original.territory||[]));
+   refreshTerritoryDisplay(); clearHandles();
+   addMode=false; roadMode=false;
+   $('addPoint').classList.remove('active'); $('followRoad').classList.remove('active');
+   makeHandles();
+   banner('TERRITORY CHANGES RESET');
+   return;
+ }
+ const idx=currentDNWIndex();
+ if(idx===null)return;
+ dnw[idx]=[];
+ ensureDNWLayer(idx).setLatLngs([]);
+ refreshDNWLabel(idx);
+ clearHandles();
+ addingDNW=true;
+ $('finishDNW').style.display='inline-block';
+ $('dnwChooser').style.display='none';
+ $('dnwAddHelp').style.display='block';
+ $('editorTitle').textContent=`Rebuild Do Not Work Area ${idx+1}`;
+ $('editorHelp').textContent='This area is now empty. Tap its boundary points on the map, then tap Finish Area.';
+ banner(`REBUILDING DO NOT WORK AREA ${idx+1}: TAP POINT 1`);
+});
+
+map.on('moveend',()=>{if(housesVisible&&!editMode)loadHouses()});
+loadHouses();
+})();
+</script>
+</body>
+</html>
