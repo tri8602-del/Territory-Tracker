@@ -776,6 +776,16 @@ function syncSetStatus(t,ok=false){
   $('syncStatus').textContent=t;
   $('syncStatus').style.color=ok?'#16803c':'#444';
 }
+function showFirebaseDiagnostic(err){
+  const code = err && err.code ? String(err.code) : 'unknown';
+  const message = err && err.message ? String(err.message) : String(err || 'Unknown error');
+  const detail = document.getElementById('syncStatus');
+  if(detail){
+    detail.textContent = 'Firebase error: ' + code + ' — ' + message;
+  }
+  console.error('Territory Tracker Firebase error:', err);
+}
+
 async function ensureFirebase(){
   if(firebaseReady && firebaseUser && firestore)return true;
   try{
@@ -789,7 +799,7 @@ async function ensureFirebase(){
     return firebaseReady;
   }catch(e){
     console.error('Firebase initialization failed:',e);
-    if($('syncSheet')) syncSetStatus('Firebase could not connect. Enable Anonymous sign-in in Firebase Authentication.');
+    if($('syncSheet')) syncSetStatus('Firebase could not connect. The diagnostic details below show the actual Firebase error.');
     return false;
   }
 }
