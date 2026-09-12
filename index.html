@@ -849,7 +849,9 @@ function firestoreEncode(value){
   if(Array.isArray(value)){
     const items={};
     value.forEach((v,i)=>{items[String(i)]=firestoreEncode(v)});
-    return {__ttArray__:true,items};
+    // Firestore reserves field names that begin and end with "__".
+    // Use ordinary field names for our array marker instead.
+    return {ttArrayMarker:true,values:items};
   }
   if(value&&typeof value==='object'){
     const out={};
@@ -861,8 +863,8 @@ function firestoreEncode(value){
 function firestoreDecode(value){
   if(Array.isArray(value))return value.map(firestoreDecode);
   if(value&&typeof value==='object'){
-    if(value.__ttArray__===true&&value.items&&typeof value.items==='object'&&!Array.isArray(value.items)){
-      return Object.keys(value.items).sort((a,b)=>Number(a)-Number(b)).map(k=>firestoreDecode(value.items[k]));
+    if(value.ttArrayMarker===true&&value.values&&typeof value.values==='object'&&!Array.isArray(value.values)){
+      return Object.keys(value.values).sort((a,b)=>Number(a)-Number(b)).map(k=>firestoreDecode(value.values[k]));
     }
     const out={};
     Object.keys(value).forEach(k=>{out[k]=firestoreDecode(value[k])});
