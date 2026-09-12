@@ -741,7 +741,7 @@ $('tmImportFile').addEventListener('change',e=>{if(e.target.files?.[0])ttImportA
 // a device/user identity; Firestore rules require authentication. The code is
 // deliberately high-entropy and should be shared only with the congregation.
 const firebaseConfig={
-  apiKey:"AIzaSyAp9VqlFaPaOYYMYPYRIlvEtugZQFEiBNk",
+  apiKey:"AIzaSyDCRuAN_PM_bmVSHVl-kEsiszproydi7dA",
   authDomain:"territory-tracker-e44f2.firebaseapp.com",
   projectId:"territory-tracker-e44f2",
   storageBucket:"territory-tracker-e44f2.firebasestorage.app",
@@ -777,12 +777,6 @@ function syncSetStatus(t,ok=false){
   $('syncStatus').style.color=ok?'#16803c':'#444';
 }
 function showFirebaseDiagnostic(err){
-  const code = err && err.code ? String(err.code) : 'unknown';
-  const message = err && err.message ? String(err.message) : String(err || 'Unknown error');
-  const detail = document.getElementById('syncStatus');
-  if(detail){
-    detail.textContent = 'Firebase error: ' + code + ' — ' + message;
-  }
   console.error('Territory Tracker Firebase error:', err);
 }
 
@@ -799,7 +793,7 @@ async function ensureFirebase(){
     return firebaseReady;
   }catch(e){
     console.error('Firebase initialization failed:',e);
-    showFirebaseDiagnostic(e);
+    syncSetStatus('Firebase connection failed. Check Shared Cloud Sync.',false);
     return false;
   }
 }
