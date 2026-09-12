@@ -842,6 +842,37 @@ function sanitizeTerritoryRecord(t){
   if(t.lastWorked)out.lastWorked=String(t.lastWorked);
   return out;
 }
+// Firestore does not allow an array to contain another array. Territory
+// geometry and Do Not Work areas naturally contain nested coordinate arrays,
+// so encode arrays as ordinary objects for cloud storage and restore them on load.
+function firestoreEncode(value){
+  if(Array.isArray(value)){
+    const items={};
+    value.forEach((v,i)=>{items[String(i)]=firestoreEncode(v)});
+    return {__ttArray__:true,items};
+  }
+  if(value&&typeof value==='object'){
+    const out={};
+    Object.keys(value).forEach(k=>{out[k]=firestoreEncode(value[k])});
+    return out;
+  }
+  return value;
+}
+function firestoreDecode(value){
+  if(Array.isArray(value))return value.map(firestoreDecode);
+  if(value&&typeof value==='object'){
+    if(value.__ttArray__===true&&value.items&&typeof value.items==='object'&&!Array.isArray(value.items)){
+      return Object.keys(value.items).sort((a,b)=>Number(a)-Number(b)).map(k=>firestoreDecode(value.items[k]));
+    }
+    const out={};
+    Object.keys(value).forEach(k=>{out[k]=firestoreDecode(value[k])});
+    return out;
+  }
+  return value;
+}
+function firestoreTerritoryRecord(t){
+  return firestoreEncode(sanitizeTerritoryRecord(t));
+}
 function workspaceRef(){
   if(!firestore||!syncWorkspaceCode)throw Error('No shared space selected');
   return firestore.collection('workspaces').doc(workspaceIdFromCode(syncWorkspaceCode));
@@ -895,7 +926,7 @@ async function writeTerritoriesInBatches(ref,items){
   for(const chunk of chunkArray(list,450)){
     if(!chunk.length)continue;
     const batch=firestore.batch();
-    chunk.forEach(t=>batch.set(ref.collection('territories').doc(String(t.id)),sanitizeTerritoryRecord(t),{merge:true}));
+    chunk.forEach(t=>batch.set(ref.collection('territories').doc(String(t.id)),firestoreTerritoryRecord(t),{merge:true}));
     await batch.commit();
   }
 }
@@ -931,7 +962,7 @@ async function syncLoadCloud(fromJoin=false){
     const q=await ref.collection('territories').get();
     if(q.empty){syncSetStatus('The shared space has no territory documents yet.');return}
     const incoming=[];
-    q.forEach(doc=>{const t=doc.data();if(validateTerritoryRecord(t))incoming.push(sanitizeTerritoryRecord(t))});
+    q.forEach(doc=>{const t=firestoreDecode(doc.data());if(validateTerritoryRecord(t))incoming.push(sanitizeTerritoryRecord(t))});
     if(!incoming.length){syncSetStatus('Cloud data is invalid. Nothing was changed.');return}
     if(!fromJoin && !confirm('Load the shared territories and replace the territories currently on this device?'))return;
     territoryRegistry=incoming;
