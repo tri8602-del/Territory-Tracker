@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Firebase Auth Diagnostic</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Arial;margin:0;padding:24px;background:#f2f2f7;color:#111}
+main{max-width:700px;margin:auto;background:#fff;border-radius:18px;padding:22px;box-shadow:0 2px 14px #0002}
+h1{font-size:22px;margin-top:0}
+#result{margin-top:18px;padding:16px;border-radius:12px;background:#f2f2f7;white-space:pre-wrap;word-break:break-word}
+.ok{background:#dff5e4!important;color:#146b2f}
+.bad{background:#ffe1df!important;color:#8a1710}
+.small{color:#666;font-size:13px}
+</style>
+</head>
+<body>
+<main>
+<h1>Firebase Authentication Diagnostic</h1>
+<p class="small">This page tests only Firebase Anonymous Authentication. It does not read or change Territory Tracker data.</p>
+<div id="result">Testing Firebase connection…</div>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-auth-compat.js"></script>
+<script>
+(async function(){
+  const result=document.getElementById('result');
+
+  const firebaseConfig={
+    apiKey:"AIzaSyAp9VqlFaPaOYYMYPYRIlvEtugZQFEiBNk",
+    authDomain:"territory-tracker-e44f2.firebaseapp.com",
+    projectId:"territory-tracker-e44f2",
+    storageBucket:"territory-tracker-e44f2.firebasestorage.app",
+    messagingSenderId:"1084862266247",
+    appId:"1:1084862266247:web:1d0b2b03144b7502a57122"
+  };
+
+  try{
+    if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    const auth=firebase.auth();
+
+    if(!auth.currentUser){
+      await auth.signInAnonymously();
+    }
+
+    if(auth.currentUser){
+      result.className='ok';
+      result.textContent=
+        '✅ ANONYMOUS AUTH WORKED\n\n' +
+        'Firebase accepted the API key and successfully signed this browser in anonymously.\n\n' +
+        'That means the problem is inside the Territory Tracker app, not the Firebase API key itself.';
+    }else{
+      throw new Error('Firebase did not return a signed-in user.');
+    }
+  }catch(e){
+    result.className='bad';
+    result.textContent=
+      '❌ ANONYMOUS AUTH FAILED\n\n' +
+      'Error code: ' + (e && e.code ? e.code : 'unknown') + '\n\n' +
+      'Error message: ' + (e && e.message ? e.message : String(e));
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>
