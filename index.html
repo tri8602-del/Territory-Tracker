@@ -957,26 +957,16 @@ async function syncLoadCloud(fromJoin=false){
   syncSetStatus('Loading all territories from Firebase…');
   try{
     const ref=workspaceRef();
-    syncSetStatus('TEST 1: Reading shared workspace…');
-    let snap;
-    try{
-      snap=await ref.get();
-    }catch(err){
-      console.error('TEST 1 workspace read failed:',err);
-      syncSetStatus('TEST 1 FAILED — workspace read: '+(err?.code||'unknown')+' — '+(err?.message||err));
+    const snap=await ref.get();
+    if(!snap.exists){syncSetStatus('No shared territory data exists for this code yet.');return}
+    const q=await ref.collection('territories').get();
+    if(q.empty){
+      // The shared workspace exists but has not been populated yet. This device
+      // can safely seed the empty shared space with its local territories.
+      syncCloudLoaded=true;
+      syncSetStatus('Shared space is empty. Your local territories are ready to be saved.',true);
       return;
     }
-    if(!snap.exists){syncSetStatus('TEST 1 PASSED — workspace does not exist.');return}
-    syncSetStatus('TEST 1 PASSED — workspace read. TEST 2: Reading territories…');
-    let q;
-    try{
-      q=await ref.collection('territories').get();
-    }catch(err){
-      console.error('TEST 2 territories read failed:',err);
-      syncSetStatus('TEST 2 FAILED — territories read: '+(err?.code||'unknown')+' — '+(err?.message||err));
-      return;
-    }
-    if(q.empty){syncSetStatus('The shared space has no territory documents yet.');return}
     const incoming=[];
     q.forEach(doc=>{const t=firestoreDecode(doc.data());if(validateTerritoryRecord(t))incoming.push(sanitizeTerritoryRecord(t))});
     if(!incoming.length){syncSetStatus('Cloud data is invalid. Nothing was changed.');return}
@@ -996,8 +986,8 @@ async function syncLoadCloud(fromJoin=false){
     syncSetStatus('Shared territories loaded.',true);
     if(!fromJoin)syncHide();
   }catch(e){
-    console.error('Firebase load diagnostic failed:',e);
-    syncSetStatus('LOAD UNEXPECTED ERROR: '+(e?.code||'unknown')+' — '+(e?.message||e));
+    console.error('Firebase load failed:',e);
+    syncSetStatus('Cloud load failed: '+(e?.message||'unknown error'));
   }finally{if(!fromJoin)syncBusy=false}
 }
 function syncDisconnect(){
