@@ -189,6 +189,7 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
   <div class="tmTitle">🗂️ Territories</div>
   <div class="tmSub">Each territory is independent. Create, switch, rename, archive, delete, or import a territory without changing the others.</div>
   <div class="tmBtns">
+   <button id="tmViewAll" class="primary">🗺️ View All Territories</button>
    <button id="tmNew" class="primary">➕ New Territory</button>
    <button id="tmImport">📂 Import as New</button>
   </div>
@@ -559,6 +560,87 @@ function ttRebuildMap(){
   dnw.forEach((_,i)=>ensureDNWLayer(i)); refreshAllDNWLabels();
   houseLayer.clearLayers(); if(housesVisible)loadHouses();
 }
+let allTerritoryLayers=[];
+let allTerritoriesView=false;
+
+function clearAllTerritoryViewLayers(){
+  allTerritoryLayers.forEach(layer=>{if(layer)map.removeLayer(layer)});
+  allTerritoryLayers=[];
+}
+
+function ttShowAllTerritories(){
+  if(editMode)closeEditor(false);
+  const candidates=territoryRegistry.filter(t=>!t.archived && Array.isArray(t.territory) && t.territory.length>=3);
+  if(!candidates.length){
+    banner('No active territories have boundary maps yet.');
+    setTimeout(()=>banner(''),1800);
+    return;
+  }
+
+  clearAllTerritoryViewLayers();
+  allTerritoriesView=true;
+
+  // Keep the normal current-territory layer in the data model, but hide its
+  // display layers so the all-territories view is clean and non-duplicated.
+  if(map.hasLayer(territoryLayer))map.removeLayer(territoryLayer);
+  if(map.hasLayer(territoryOutline))map.removeLayer(territoryOutline);
+  dnwLayers.forEach(layer=>{if(layer&&map.hasLayer(layer))map.removeLayer(layer)});
+  dnwLabelLayers.forEach(layer=>{if(layer&&map.hasLayer(layer))map.removeLayer(layer)});
+  if(map.hasLayer(houseLayer))map.removeLayer(houseLayer);
+
+  const palette=['#d71920','#007aff','#34a853','#f39c12','#8e44ad','#00a6a6','#e84393','#795548'];
+  const bounds=L.latLngBounds([]);
+
+  candidates.forEach((t,index)=>{
+    const isCurrent=t.id===currentTerritoryId;
+    const color=palette[index%palette.length];
+    const layer=L.polygon(t.territory,{
+      color,
+      weight:isCurrent?5:3,
+      opacity:.95,
+      fillColor:color,
+      fillOpacity:isCurrent?.16:.08
+    }).addTo(map);
+
+    layer.bindTooltip(escapeHtml(t.name),{
+      sticky:true,
+      direction:'center',
+      opacity:.9
+    });
+
+    layer.on('click',()=>{
+      ttShowCurrentTerritory(t.id);
+    });
+
+    t.territory.forEach(p=>bounds.extend([p[0],p[1]]));
+    allTerritoryLayers.push(layer);
+  });
+
+  if(bounds.isValid()){
+    map.invalidateSize(false);
+    map.fitBounds(bounds,{padding:[30,30],maxZoom:16,animate:false});
+  }
+
+  $('tmViewAll').textContent='📍 Return to Current Territory';
+  ttRenderManager();
+  banner('ALL ACTIVE TERRITORIES');
+  setTimeout(()=>banner(''),1600);
+}
+
+function ttShowCurrentTerritory(id=currentTerritoryId){
+  const target=territoryRegistry.find(t=>t.id===id);
+  if(target && id!==currentTerritoryId){
+    ttSwitch(id);
+    return;
+  }
+  allTerritoriesView=false;
+  clearAllTerritoryViewLayers();
+  ttRebuildMap();
+  if(target)ttCenterOnTerritory(target);
+  $('tmViewAll').textContent='🗺️ View All Territories';
+  ttHideManager();
+}
+
 function ttRenderManager(){
   const list=$('tmList'); list.innerHTML='';
   const active=territoryRegistry.filter(t=>!t.archived), archived=territoryRegistry.filter(t=>t.archived);
@@ -592,6 +674,8 @@ function ttHideManager(){$('territoryManager').classList.remove('show');}
 function ttSwitch(id){
   const t=territoryRegistry.find(x=>x.id===id); if(!t)return;
   if(editMode)closeEditor(false);
+  allTerritoriesView=false;
+  clearAllTerritoryViewLayers();
   ttSaveCurrent();
   currentTerritoryId=id; localStorage.setItem(TT_CURRENT_KEY,id);
   ttLoadRecord(t);
@@ -644,6 +728,8 @@ async function ttCreateTerritoryFromForm(){
     currentTerritoryId=t.id;
     localStorage.setItem(TT_CURRENT_KEY,t.id);
     ttSaveRegistry();
+    allTerritoriesView=false;
+    clearAllTerritoryViewLayers();
     ttLoadRecord(t);
 
     // New territories always begin with houses visible. This keeps the
@@ -687,6 +773,8 @@ function ttDelete(id){
   ttSaveRegistry();
 
   if(wasCurrent){
+    allTerritoriesView=false;
+    clearAllTerritoryViewLayers();
     const next=territoryRegistry.find(x=>!x.archived)||territoryRegistry[0];
     if(next){
       currentTerritoryId=next.id;
@@ -705,6 +793,8 @@ function ttArchive(){
   if(territoryRegistry.filter(x=>!x.archived).length<=1){alert('Keep at least one active territory.');return}
   if(!confirm('Archive '+t.name+'? You can restore it later.'))return;
   t.archived=true; ttSaveCurrent();
+  allTerritoriesView=false;
+  clearAllTerritoryViewLayers();
   const next=territoryRegistry.find(x=>!x.archived); currentTerritoryId=next.id; localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
   ttLoadRecord(next); ttRebuildMap(); ttHideManager();
 }
@@ -727,6 +817,7 @@ function ttImportAsNew(file){
 }
 ttLoadRegistry();
 $('territories').addEventListener('click',ttShowManager);
+$('tmViewAll').addEventListener('click',()=>allTerritoriesView?ttShowCurrentTerritory():ttShowAllTerritories());
 $('tmClose').addEventListener('click',ttHideManager);
 $('tmNew').addEventListener('click',ttNewTerritory);
 $('tmLocateNew').addEventListener('click',ttCreateTerritoryFromForm);
