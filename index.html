@@ -964,6 +964,7 @@ async function syncLoadCloud(fromJoin=false){
       // The shared workspace exists but has not been populated yet. This device
       // can safely seed the empty shared space with its local territories.
       syncCloudLoaded=true;
+      syncShowConnected();
       syncSetStatus('Shared space is empty. Your local territories are ready to be saved.',true);
       return;
     }
