@@ -80,6 +80,19 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 .tmTitle{font-size:20px;font-weight:800;margin-bottom:5px}.tmSub{font-size:13px;color:#555;margin-bottom:10px}
 .tmRow{display:flex;align-items:center;gap:7px;padding:10px 4px;border-bottom:1px solid #eee}.tmRowName{flex:1;font-weight:700}.tmMeta{font-size:11px;color:#777}
 .tmBtns{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.tmBtns button{flex:1;min-width:125px}
+.all-territory-label{
+  background:#fff!important;
+  border:1px solid #666!important;
+  border-radius:8px!important;
+  box-shadow:0 1px 4px #0003!important;
+  color:#111!important;
+  font-weight:800!important;
+  font-size:12px!important;
+  padding:3px 7px!important;
+  pointer-events:none!important;
+}
+.all-territory-label:before{display:none!important}
+
 @media(max-width:600px){#syncSheet input{font-size:16px!important;min-height:44px}}
 </style>
 
@@ -187,7 +200,7 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 <section id="territoryManager">
  <div class="tmSheet">
   <div class="tmTitle">🗂️ Territories</div>
-  <div class="tmSub">Each territory is independent. Create, switch, rename, archive, delete, or import a territory without changing the others.</div>
+  <div class="tmSub">View all active territories at once, or manage them individually. Tap a territory on the map to open it.</div>
   <div class="tmBtns">
    <button id="tmViewAll" class="primary">🗺️ View All Territories</button>
    <button id="tmNew" class="primary">➕ New Territory</button>
@@ -602,14 +615,17 @@ function ttShowAllTerritories(){
       fillOpacity:isCurrent?.16:.08
     }).addTo(map);
 
+    // Show the territory name directly on the overview map.
+    // Tooltips have pointer-events disabled so the polygon remains clickable.
     layer.bindTooltip(escapeHtml(t.name),{
-      sticky:true,
+      permanent:true,
       direction:'center',
-      opacity:.9
+      className:'all-territory-label',
+      opacity:.95
     });
 
     layer.on('click',()=>{
-      ttShowCurrentTerritory(t.id);
+      ttOpenTerritoryFromAll(t.id);
     });
 
     t.territory.forEach(p=>bounds.extend([p[0],p[1]]));
@@ -627,18 +643,36 @@ function ttShowAllTerritories(){
   setTimeout(()=>banner(''),1600);
 }
 
-function ttShowCurrentTerritory(id=currentTerritoryId){
-  const target=territoryRegistry.find(t=>t.id===id);
-  if(target && id!==currentTerritoryId){
-    ttSwitch(id);
-    return;
-  }
+function ttOpenTerritoryFromAll(id){
+  const target=territoryRegistry.find(t=>t.id===id && !t.archived);
+  if(!target)return;
+
+  // Leave the overview first, then explicitly load the selected territory.
+  // This avoids relying on the normal territory-manager click path.
   allTerritoriesView=false;
   clearAllTerritoryViewLayers();
-  ttRebuildMap();
-  if(target)ttCenterOnTerritory(target);
+
+  if(editMode)closeEditor(false);
+  ttSaveCurrent();
+
+  currentTerritoryId=target.id;
+  localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
+  ttLoadRecord(target);
+
   $('tmViewAll').textContent='🗺️ View All Territories';
+  ttRebuildMap();
   ttHideManager();
+
+  // Fit to the selected territory after its layers have been rebuilt.
+  setTimeout(()=>ttCenterOnTerritory(target),50);
+  setTimeout(()=>ttCenterOnTerritory(target),250);
+
+  banner('TERRITORY: '+target.name);
+  setTimeout(()=>banner(''),1600);
+}
+
+function ttShowCurrentTerritory(id=currentTerritoryId){
+  ttOpenTerritoryFromAll(id);
 }
 
 function ttRenderManager(){
