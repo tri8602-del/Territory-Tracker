@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#007aff">
 <title>Territory Tracker</title>
+<!-- manifest.json is not in the repo yet. The link is kept on purpose: it will be added with the planned offline / home-screen (PWA) work. -->
 <link rel="manifest" href="manifest.json">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
@@ -162,6 +163,29 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
   .leaflet-control-attribution{font-size:8px}
 }
 </style>
+
+<style id="layout-fixes">
+/* Phone: the button bar grows to fit all its buttons and the legend; the map ends where the bar starts (--tt-bottom is set from the script). */
+@media (max-width:600px){
+  .bottom{height:auto!important;overflow:visible!important}
+  #map{bottom:var(--tt-bottom,126px)!important}
+  #dataTransfer{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px!important;margin-top:4px!important}
+  #dataTransfer label{display:block!important;min-width:0}
+  #dataTransfer button,#dataTransfer label span{display:flex!important;align-items:center;justify-content:center;width:100%;min-width:0;min-height:34px;border:0!important;border-radius:8px!important;padding:3px 2px!important;font-size:10px!important;line-height:11px!important;font-weight:700!important;background:#e5e5ea!important;color:#111;text-align:center;touch-action:manipulation}
+  .legend{font-size:9px}
+  /* Editor buttons wrap onto a second row instead of running off the right edge. */
+  .editorBtns{flex-wrap:wrap!important;overflow-x:visible!important}
+  .editorBtns button{flex:1 1 30%!important;white-space:normal!important}
+}
+/* Larger screens: the editor is a panel on the left, so the map and its points stay visible. */
+@media (min-width:601px){
+  #editor{left:10px;right:auto;width:340px;max-height:calc(100vh - 82px - var(--tt-bottom,130px) - 16px)}
+  .editorBtns{flex-wrap:wrap;overflow-x:visible}
+  .editorBtns button{flex:1 1 30%;white-space:normal}
+  .roadBtns{grid-template-columns:1fr 1fr}.roadBtns button{white-space:normal}
+}
+@media (min-width:601px) and (max-width:900px){#editor{width:300px}}
+</style>
 </head>
 <body>
 <div class="app">
@@ -315,6 +339,76 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 <script>
 (function(){
 'use strict';
+// ---------------- Data safety ----------------
+// Damaged saved data or a bad file must never stop the app from starting:
+// unreadable values are skipped (a copy is kept on the device) and bad coordinates are dropped.
+const ttRepairNotes=[];
+function ttSafeParse(key,fallback){
+  const raw=localStorage.getItem(key);
+  if(raw===null||raw==='')return fallback;
+  try{return JSON.parse(raw)}catch(e){
+    try{localStorage.setItem('tt_damaged_backup_'+key,raw)}catch(_){}
+    ttRepairNotes.push(key);
+    return fallback;
+  }
+}
+function ttNow(){return new Date().toISOString();}
+function ttCleanPoint(p){
+  if(!Array.isArray(p)||p.length<2||p[0]===null||p[1]===null||p[0]===''||p[1]==='')return null;
+  const a=Number(p[0]),b=Number(p[1]);
+  return Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a)<=90&&Math.abs(b)<=180?[a,b]:null;
+}
+function ttCleanRing(arr,stats){
+  if(!Array.isArray(arr)){if(stats)stats.bad++;return []}
+  const out=[];
+  arr.forEach(p=>{const q=ttCleanPoint(p);if(q)out.push(q);else if(stats)stats.bad++;});
+  return out;
+}
+// Boundary, Do Not Work areas and their names, with unusable points skipped.
+function ttCleanShapes(src,stats){
+  const names=Array.isArray(src.dnwNames)?src.dnwNames:[];
+  const dnw=[],dnwNames=[];
+  (Array.isArray(src.dnw)?src.dnw:[]).forEach((ring,i)=>{
+    if(!Array.isArray(ring)){if(stats)stats.bad++;return}
+    dnw.push(ttCleanRing(ring,stats));
+    dnwNames.push(typeof names[i]==='string'&&names[i].trim()?names[i]:`Do Not Work Area ${dnw.length}`);
+  });
+  return {territory:ttCleanRing(src.territory,stats),dnw,dnwNames};
+}
+const TT_STATUSES=['worked','nothome','return','dnc'];
+// House records: {status, note, statusAt, noteAt}. The "At" times let two devices merge (newest change wins).
+function ttCleanRecords(recs,stats){
+  const out={};
+  if(!recs||typeof recs!=='object'||Array.isArray(recs))return out;
+  Object.keys(recs).forEach(id=>{
+    const r=recs[id];
+    if(!r||typeof r!=='object'||Array.isArray(r)){if(stats)stats.bad++;return}
+    const o={};
+    if(TT_STATUSES.includes(r.status))o.status=r.status;
+    if(typeof r.note==='string'&&r.note)o.note=r.note;
+    if(typeof r.statusAt==='string')o.statusAt=r.statusAt;
+    if(typeof r.noteAt==='string')o.noteAt=r.noteAt;
+    if(Object.keys(o).length)out[String(id)]=o;
+  });
+  return out;
+}
+// Pick the newer of two versions of one field. A tie keeps x when x has the field at all.
+function ttPick(x,y,f){
+  const ta=x[f+'At']||'',tb=y[f+'At']||'';
+  if(tb>ta)return y;
+  if(ta>tb)return x;
+  return (x[f]!==undefined||x[f+'At'])?x:y;
+}
+function ttMergeRecords(a,b){
+  const out={};
+  new Set([...Object.keys(a||{}),...Object.keys(b||{})]).forEach(id=>{
+    const x=(a&&a[id])||{},y=(b&&b[id])||{},r={};
+    const s=ttPick(x,y,'status');if(s.status)r.status=s.status;if(s.statusAt)r.statusAt=s.statusAt;
+    const n=ttPick(x,y,'note');if(n.note)r.note=n.note;if(n.noteAt)r.noteAt=n.noteAt;
+    if(Object.keys(r).length)out[id]=r;
+  });
+  return out;
+}
 // Cross-device map-data transfer. Static GitHub Pages cannot directly share
 // localStorage between the PC and iPhone, so this provides a safe JSON export/import.
 function exportMapData(){
@@ -341,22 +435,30 @@ function importMapDataFile(file){
   reader.onload=()=>{
     try{
       const data=JSON.parse(reader.result);
-      if(!Array.isArray(data.territory)||!Array.isArray(data.dnw)) throw new Error('Invalid map data');
-      if(!confirm('Import this map data? This will replace the territory and Do Not Work boundaries on this device.')) return;
-      territory=data.territory;
-      dnw=data.dnw;
-      dnwNames=Array.isArray(data.dnwNames)?data.dnwNames:[];
-      records=data.records&&typeof data.records==='object'&&!Array.isArray(data.records)?data.records:{};
+      if(!data||typeof data!=='object'||!Array.isArray(data.territory)||!Array.isArray(data.dnw)) throw new Error('Invalid map data');
+      const st={bad:0};
+      const shapes=ttCleanShapes(data,st);
+      if(data.territory.length&&shapes.territory.length<3) throw new Error('No usable boundary');
+      const fileRecords=ttCleanRecords(data.records,st);
+      const nFile=Object.keys(fileRecords).length,nHere=Object.keys(records).filter(k=>records[k].status||records[k].note).length;
+      const plural=n=>n===1?'':'s';
+      if(!confirm(`Import this map data?\n\nThis replaces this territory's boundary and Do Not Work areas, AND its house statuses and notes (${nFile} house${plural(nFile)} in the file, ${nHere} on this device).`+(st.bad?`\n\n${st.bad} unusable item${plural(st.bad)} in the file will be skipped.`:''))) return;
+      let keep=false;
+      if(nHere) keep=confirm(`Keep the house statuses and notes already on this device?\n\nOK = keep them. Houses that are only in the file are added; where both have the same house, the newer change wins.\nCancel = replace them with the file's statuses and notes.`);
+      territory=shapes.territory;
+      dnw=shapes.dnw;
+      dnwNames=shapes.dnwNames;
+      records=keep?ttMergeRecords(records,fileRecords):fileRecords;
       const current=ttCurrent();
       if(current){
         if(data.startPoint&&Number.isFinite(Number(data.startPoint.lat))&&Number.isFinite(Number(data.startPoint.lng))) current.startPoint={lat:Number(data.startPoint.lat),lng:Number(data.startPoint.lng),address:String(data.startPoint.address||'')};
         else delete current.startPoint;
         if(data.lastWorked) current.lastWorked=String(data.lastWorked);
+        current.geoAt=ttNow();
       }
-      while(dnwNames.length<dnw.length) dnwNames.push(`Do Not Work Area ${dnwNames.length+1}`);
-      dnwNames=dnwNames.slice(0,dnw.length);
       localStorage.setItem('tt_geometry_stable',JSON.stringify({territory,dnw}));
       localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
+      localStorage.setItem('tt_house_records_stable',JSON.stringify(records));
       if(typeof ttSaveCurrent==='function')ttSaveCurrent();
       location.reload();
     }catch(e){alert('That file does not contain valid Territory Tracker map data.');}
@@ -365,16 +467,27 @@ function importMapDataFile(file){
 }
 const map=L.map('map').setView([39.963,-79.878],14);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap contributors'}).addTo(map);
+// Keep the map's bottom edge at the top of the button bar (its height depends on the screen).
+function ttFitBottomBar(){
+  const b=document.querySelector('.bottom');if(!b)return;
+  document.documentElement.style.setProperty('--tt-bottom',b.offsetHeight+'px');
+  map.invalidateSize(false);
+}
+window.addEventListener('resize',ttFitBottomBar);
+if(window.ResizeObserver)new ResizeObserver(ttFitBottomBar).observe(document.querySelector('.bottom'));
+ttFitBottomBar();
 
 const defaultTerritory=[[39.982,-79.910],[39.981,-79.890],[39.978,-79.870],[39.973,-79.851],[39.963,-79.840],[39.950,-79.846],[39.939,-79.857],[39.941,-79.875],[39.946,-79.892],[39.952,-79.905],[39.967,-79.910]];
 const defaultDNW=[
 [[39.9717,-79.8965],[39.9708,-79.8870],[39.9668,-79.8860],[39.9618,-79.8885],[39.9602,-79.8990],[39.9650,-79.9020]],
 [[39.9610,-79.8830],[39.9558,-79.8760],[39.9500,-79.8825],[39.9525,-79.8890],[39.9585,-79.8880]]
 ];
-let geometry=JSON.parse(localStorage.getItem('tt_geometry_stable')||'null')||{territory:defaultTerritory,dnw:defaultDNW};
-let territory=geometry.territory, dnw=geometry.dnw;
-let dnwNames=JSON.parse(localStorage.getItem('tt_dnw_names_v1')||'null');
+let geometry=ttSafeParse('tt_geometry_stable',null);
+if(!geometry||typeof geometry!=='object'||!Array.isArray(geometry.territory)||!Array.isArray(geometry.dnw))geometry={territory:defaultTerritory,dnw:defaultDNW};
+let territory=ttCleanRing(geometry.territory), dnw=geometry.dnw.filter(Array.isArray).map(r=>ttCleanRing(r));
+let dnwNames=ttSafeParse('tt_dnw_names_v1',null);
 if(!Array.isArray(dnwNames)) dnwNames=[];
+dnwNames=dnwNames.map(n=>typeof n==='string'?n:'');
 while(dnwNames.length<dnw.length) dnwNames.push(`Do Not Work Area ${dnwNames.length+1}`);
 if(dnwNames.length>dnw.length) dnwNames=dnwNames.slice(0,dnw.length);
 
@@ -464,9 +577,32 @@ const dnwLabelLayers=[];
 
 
 let housesVisible=true, remainingOnly=false, houseLayer=L.layerGroup().addTo(map);
-let records=JSON.parse(localStorage.getItem('tt_house_records_stable')||'{}');
+let records=ttCleanRecords(ttSafeParse('tt_house_records_stable',{}));
 let houseCurrent=null;
 let editorTarget='territory', editMode=false, addMode=false, roadMode=false, addingDNW=false, activeDNWIndex=null;
+// drawMode: drawing a brand-new territory boundary, every tap places the next point.
+let drawMode=false;
+// If points being edited are off screen or under the editor panel, move the map so they show.
+function ttRevealPoints(pts){
+  try{
+    const ok=(pts||[]).filter(p=>Array.isArray(p)&&p.length>=2&&Number.isFinite(p[0])&&Number.isFinite(p[1]));
+    if(!ok.length)return;
+    const ed=document.getElementById('editor'),open=ed.classList.contains('show');
+    const m=map.getContainer().getBoundingClientRect(),r=ed.getBoundingClientRect();
+    const hidden=ok.some(p=>{
+      const q=map.latLngToContainerPoint([p[0],p[1]]),x=q.x+m.left,y=q.y+m.top;
+      if(q.x<4||q.y<4||q.x>m.width-4||q.y>m.height-4)return true;
+      return open&&x>=r.left-10&&x<=r.right+10&&y>=r.top-10&&y<=r.bottom+10;
+    });
+    if(!hidden)return;
+    const side=open&&window.innerWidth>600;
+    map.fitBounds(L.latLngBounds(ok.map(p=>[p[0],p[1]])),{
+      paddingTopLeft:[24+(side?Math.max(0,r.right-m.left):0),24],
+      paddingBottomRight:[24,24+(open&&!side?Math.max(0,m.bottom-r.top):0)],
+      maxZoom:18,animate:false
+    });
+  }catch(e){console.warn('Could not move the map to the points',e)}
+}
 let handles=[], selectedPointIndices=[], roadPreview=null, pendingRoad=null, original=null;
 
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
@@ -479,7 +615,7 @@ $('saveTerritoryName').addEventListener('click',()=>{
   if(!name){banner('Enter a territory name first');return}
   const t=ttCurrent&&ttCurrent();
   if(!t){banner('No current territory');return}
-  t.name=name;
+  t.name=name; t.metaAt=ttNow();
   $('currentTerritoryName').textContent=name;
   ttSaveRegistry();
   banner('TERRITORY RENAMED: '+name);
@@ -521,13 +657,20 @@ function ttLoadRecord(t){
   }
 }
 function ttLoadRegistry(){
-  try{territoryRegistry=JSON.parse(localStorage.getItem(TT_REG_KEY)||'[]')}catch(e){territoryRegistry=[]}
-  if(!Array.isArray(territoryRegistry))territoryRegistry=[];
+  territoryRegistry=ttSafeParse(TT_REG_KEY,[]);
+  if(!Array.isArray(territoryRegistry)){ttRepairNotes.push(TT_REG_KEY);territoryRegistry=[];}
   if(!territoryRegistry.length){
-    try{
-      const old=JSON.parse(localStorage.getItem('tt_territories_v1')||'[]');
-      if(Array.isArray(old)&&old.length)territoryRegistry=old;
-    }catch(e){}
+    const old=ttSafeParse('tt_territories_v1',[]);
+    if(Array.isArray(old)&&old.length)territoryRegistry=old;
+  }
+  // Skip anything damaged (bad coordinates, broken entries) instead of failing to start.
+  const st={bad:0},raw=JSON.stringify(territoryRegistry);
+  territoryRegistry=territoryRegistry.filter(t=>{if(t&&typeof t==='object'&&!Array.isArray(t))return true;st.bad++;return false;})
+    .map(t=>sanitizeTerritoryRecord(Object.assign({},t,{id:typeof t.id==='string'&&t.id?t.id:ttNewId(),name:typeof t.name==='string'&&t.name.trim()?t.name:'Territory'}),st));
+  if(st.bad){
+    try{localStorage.setItem('tt_damaged_backup_'+TT_REG_KEY,raw)}catch(e){}
+    ttRepairNotes.push(st.bad+' damaged item(s)');
+    ttSaveRegistry();
   }
   if(!territoryRegistry.length){
     const t={id:ttNewId(),name:'Republic / Cardale',archived:false,territory:ttClone(territory),dnw:ttClone(dnw),dnwNames:ttClone(dnwNames),records:ttClone(records),updatedAt:new Date().toISOString()};
@@ -689,7 +832,7 @@ function ttRenderManager(){
       open.textContent=t.archived?'↩️ Restore':'Open';
       open.disabled=!t.archived && t.id===currentTerritoryId;
       open.style.minWidth='72px';
-      open.onclick=()=>{ if(t.archived){ t.archived=false; ttSaveRegistry(); ttRenderManager(); } else ttSwitch(t.id); };
+      open.onclick=()=>{ if(t.archived){ t.archived=false; t.metaAt=ttNow(); ttSaveRegistry(); ttRenderManager(); } else ttSwitch(t.id); };
 
       const del=document.createElement('button');
       del.textContent='🗑️ Delete';
@@ -756,7 +899,7 @@ async function ttCreateTerritoryFromForm(){
     const t={
       id:ttNewId(),name,archived:false,territory:[],dnw:[],dnwNames:[],records:{},
       startPoint:{lat,lng,address:hits[0].display_name||address},
-      updatedAt:new Date().toISOString()
+      updatedAt:new Date().toISOString(),geoAt:ttNow(),metaAt:ttNow()
     };
     territoryRegistry.push(t);
     currentTerritoryId=t.id;
@@ -791,7 +934,7 @@ function ttNewTerritory(){
 function ttRename(){
   const t=ttCurrent(); if(!t)return;
   const name=(prompt('New territory name:',t.name)||'').trim(); if(!name)return;
-  t.name=name; ttSaveCurrent(); $('currentTerritoryName').textContent=name; ttRenderManager();
+  t.name=name; t.metaAt=ttNow(); ttSaveCurrent(); $('currentTerritoryName').textContent=name; ttRenderManager();
 }
 function ttDelete(id){
   const t=territoryRegistry.find(x=>x.id===id); if(!t)return;
@@ -805,6 +948,7 @@ function ttDelete(id){
   const wasCurrent=(id===currentTerritoryId);
   territoryRegistry=territoryRegistry.filter(x=>x.id!==id);
   ttSaveRegistry();
+  const tombs=ttLoadTombs(); tombs[id]=ttNow(); ttSaveTombs(tombs);
 
   if(wasCurrent){
     allTerritoriesView=false;
@@ -826,7 +970,7 @@ function ttArchive(){
   const t=ttCurrent(); if(!t)return;
   if(territoryRegistry.filter(x=>!x.archived).length<=1){alert('Keep at least one active territory.');return}
   if(!confirm('Archive '+t.name+'? You can restore it later.'))return;
-  t.archived=true; ttSaveCurrent();
+  t.archived=true; t.metaAt=ttNow(); ttSaveCurrent();
   allTerritoriesView=false;
   clearAllTerritoryViewLayers();
   const next=territoryRegistry.find(x=>!x.archived); currentTerritoryId=next.id; localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
@@ -836,10 +980,12 @@ function ttImportAsNew(file){
   const r=new FileReader(); r.onload=()=>{
     try{
       const d=JSON.parse(r.result);
-      if(!Array.isArray(d.territory)||!Array.isArray(d.dnw))throw Error();
-      const name=(prompt('Name for the imported territory:','Imported Territory')||'').trim(); if(!name)return;
+      if(!d||typeof d!=='object'||!Array.isArray(d.territory)||!Array.isArray(d.dnw))throw Error();
+      const st={bad:0},shapes=ttCleanShapes(d,st);
+      if(d.territory.length&&shapes.territory.length<3)throw Error('No usable boundary');
+      const name=(prompt('Name for the imported territory:'+(st.bad?` (${st.bad} unusable item${st.bad===1?'':'s'} in the file will be skipped)`:''),'Imported Territory')||'').trim(); if(!name)return;
       ttSaveCurrent();
-      const t={id:ttNewId(),name,archived:false,territory:d.territory,dnw:d.dnw,dnwNames:Array.isArray(d.dnwNames)?d.dnwNames:[],records:d.records&&typeof d.records==='object'&&!Array.isArray(d.records)?d.records:{},updatedAt:new Date().toISOString()};
+      const t={id:ttNewId(),name,archived:false,territory:shapes.territory,dnw:shapes.dnw,dnwNames:shapes.dnwNames,records:ttCleanRecords(d.records,st),updatedAt:new Date().toISOString(),geoAt:ttNow(),metaAt:ttNow()};
       if(d.startPoint&&Number.isFinite(Number(d.startPoint.lat))&&Number.isFinite(Number(d.startPoint.lng)))t.startPoint={lat:Number(d.startPoint.lat),lng:Number(d.startPoint.lng),address:String(d.startPoint.address||'')};
       if(d.lastWorked)t.lastWorked=String(d.lastWorked);
       while(t.dnwNames.length<t.dnw.length)t.dnwNames.push(`Do Not Work Area ${t.dnwNames.length+1}`);
@@ -850,6 +996,10 @@ function ttImportAsNew(file){
   }; r.readAsText(file);
 }
 ttLoadRegistry();
+if(ttRepairNotes.length){
+  console.warn('Territory Tracker skipped damaged saved data:',ttRepairNotes.join(', '));
+  setTimeout(()=>{banner('SOME DAMAGED MAP DATA ON THIS DEVICE WAS SKIPPED. A COPY WAS KEPT.');setTimeout(()=>banner(''),6000);},400);
+}
 $('territories').addEventListener('click',ttShowManager);
 $('tmViewAll').addEventListener('click',()=>allTerritoriesView?ttShowCurrentTerritory():ttShowAllTerritories());
 $('tmClose').addEventListener('click',ttHideManager);
@@ -952,15 +1102,19 @@ function syncCurrentTerritory(){
 function validateTerritoryRecord(t){
   return !!(t && typeof t==='object' && !Array.isArray(t) && typeof t.id==='string' && typeof t.name==='string' && Array.isArray(t.territory) && Array.isArray(t.dnw) && t.records && typeof t.records==='object' && !Array.isArray(t.records));
 }
-function sanitizeTerritoryRecord(t){
+function sanitizeTerritoryRecord(t,stats){
+  const shapes=ttCleanShapes(t,stats);
   const out={
     id:String(t.id),name:String(t.name||'Territory'),archived:!!t.archived,
-    territory:Array.isArray(t.territory)?ttClone(t.territory):[],
-    dnw:Array.isArray(t.dnw)?ttClone(t.dnw):[],
-    dnwNames:Array.isArray(t.dnwNames)?ttClone(t.dnwNames):[],
-    records:t.records&&typeof t.records==='object'?ttClone(t.records):{},
-    updatedAt:t.updatedAt||new Date().toISOString()
+    territory:shapes.territory,
+    dnw:shapes.dnw,
+    dnwNames:shapes.dnwNames,
+    records:ttCleanRecords(t.records,stats),
+    updatedAt:typeof t.updatedAt==='string'&&t.updatedAt?t.updatedAt:new Date().toISOString()
   };
+  // geoAt = last boundary / Do Not Work change, metaAt = last name / archive change (used to merge devices)
+  if(typeof t.geoAt==='string'&&t.geoAt)out.geoAt=t.geoAt;
+  if(typeof t.metaAt==='string'&&t.metaAt)out.metaAt=t.metaAt;
   if(t.startPoint&&Number.isFinite(Number(t.startPoint.lat))&&Number.isFinite(Number(t.startPoint.lng))){
     out.startPoint={lat:Number(t.startPoint.lat),lng:Number(t.startPoint.lng),address:String(t.startPoint.address||'')};
   }
@@ -1016,8 +1170,10 @@ async function syncJoin(){
     const ref=workspaceRef();
     const snap=await ref.get();
     if(!snap.exists){
-      await ref.set({schemaVersion:2,createdAt:firebase.firestore.FieldValue.serverTimestamp(),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),createdBy:firebaseUser.uid});
-      await writeTerritoriesInBatches(ref,territoryRegistry);
+      ttSaveCurrent();
+      await ref.set({schemaVersion:3,rev:1,createdAt:firebase.firestore.FieldValue.serverTimestamp(),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),createdBy:firebaseUser.uid});
+      await writeTerritoriesInBatches(ref,territoryRegistry,ttLoadTombs());
+      ttSetSeenRev(1);
       syncCloudLoaded=true;
       syncSetStatus('Shared space created. Your current territories are now backed up.',true);
       $('syncLast').textContent='Created: '+new Date().toLocaleString();
@@ -1025,11 +1181,14 @@ async function syncJoin(){
       syncCloudLoaded=false;
       const existing=await ref.collection('territories').get();
       if(existing.empty){
-        await writeTerritoriesInBatches(ref,territoryRegistry);
+        ttSaveCurrent();
+        await writeTerritoriesInBatches(ref,territoryRegistry,ttLoadTombs());
+        await ref.set({schemaVersion:3,rev:firebase.firestore.FieldValue.increment(1),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:firebaseUser.uid},{merge:true});
+        ttSetSeenRev(Number((await ref.get()).data()?.rev||0));
         syncCloudLoaded=true;
         syncSetStatus('Connected and uploaded your current territories.',true);
       }else{
-        const ok=confirm('A shared Territory Tracker already exists for this code. Load its territories onto this device now?');
+        const ok=confirm('A shared Territory Tracker already exists for this code. Load its territories onto this device now?\n\nThey replace the territories currently on this device.');
         if(ok){
           await syncLoadCloud(true);
         }else{
@@ -1048,14 +1207,100 @@ function chunkArray(arr,size){
   for(let i=0;i<arr.length;i+=size)out.push(arr.slice(i,i+size));
   return out;
 }
-async function writeTerritoriesInBatches(ref,items){
-  const list=Array.isArray(items)?items:[];
-  for(const chunk of chunkArray(list,450)){
+// Each territory is written as a whole (no field merge), so deleted points, areas and
+// cleared statuses do not come back. Deleted territories are written as small
+// "deleted" markers (tombstones) so every device removes them on its next Load.
+async function writeTerritoriesInBatches(ref,items,tombs){
+  const ops=[];
+  (Array.isArray(items)?items:[]).forEach(t=>ops.push([String(t.id),firestoreTerritoryRecord(t)]));
+  Object.keys(tombs||{}).forEach(id=>ops.push([String(id),firestoreEncode({ttDeleted:true,id:String(id),deletedAt:String(tombs[id])})]));
+  for(const chunk of chunkArray(ops,450)){
     if(!chunk.length)continue;
     const batch=firestore.batch();
-    chunk.forEach(t=>batch.set(ref.collection('territories').doc(String(t.id)),firestoreTerritoryRecord(t),{merge:true}));
+    chunk.forEach(([id,data])=>batch.set(ref.collection('territories').doc(id),data));
     await batch.commit();
   }
+}
+const TT_TOMBS_KEY='tt_deleted_territories_v1', TT_SEEN_KEY='tt_sync_seen_v1';
+function ttLoadTombs(){const t=ttSafeParse(TT_TOMBS_KEY,{});return t&&typeof t==='object'&&!Array.isArray(t)?t:{};}
+function ttSaveTombs(t){localStorage.setItem(TT_TOMBS_KEY,JSON.stringify(t||{}));}
+// The cloud counts its saves (rev). Remember the count this device last loaded or saved, to warn when another device saved in between.
+function ttSeenRev(){const v=ttSafeParse(TT_SEEN_KEY,null);return v&&v.code===syncWorkspaceCode?Number(v.rev)||0:0;}
+function ttSetSeenRev(rev){localStorage.setItem(TT_SEEN_KEY,JSON.stringify({code:syncWorkspaceCode,rev:Number(rev)||0,at:ttNow()}));}
+// Latest change time of anything in a territory (used to decide whether a deletion on another device wins).
+function ttEditTime(t){
+  let m=t.geoAt||'';
+  if((t.metaAt||'')>m)m=t.metaAt;
+  Object.values(t.records||{}).forEach(r=>{if((r.statusAt||'')>m)m=r.statusAt;if((r.noteAt||'')>m)m=r.noteAt;});
+  return m;
+}
+// Merge two copies of one territory. Houses: newest status and newest note win, separately.
+// Boundary + Do Not Work areas: the newest edit wins. Name/archive: the newest change wins. Ties keep a.
+function ttMergeTerritory(a,b){
+  const g=(b.geoAt||'')>(a.geoAt||'')?b:a, m=(b.metaAt||'')>(a.metaAt||'')?b:a;
+  const out=sanitizeTerritoryRecord(a);
+  out.territory=ttClone(g.territory||[]);out.dnw=ttClone(g.dnw||[]);out.dnwNames=ttClone(g.dnwNames||[]);
+  if(g.geoAt)out.geoAt=g.geoAt;else delete out.geoAt;
+  if(g.startPoint)out.startPoint=ttClone(g.startPoint);else delete out.startPoint;
+  if(g.lastWorked)out.lastWorked=g.lastWorked;
+  out.name=m.name;out.archived=!!m.archived;
+  if(m.metaAt)out.metaAt=m.metaAt;else delete out.metaAt;
+  out.records=ttMergeRecords(a.records,b.records);
+  if((b.updatedAt||'')>(out.updatedAt||''))out.updatedAt=b.updatedAt;
+  return out;
+}
+async function ttReadCloud(ref){
+  const q=await ref.collection('territories').get();
+  const list=[],tombs={};let bad=0;
+  q.forEach(doc=>{
+    const raw=firestoreDecode(doc.data());
+    if(raw&&raw.ttDeleted===true&&typeof raw.deletedAt==='string'){tombs[String(raw.id||doc.id)]=raw.deletedAt;return}
+    if(validateTerritoryRecord(raw))list.push(sanitizeTerritoryRecord(raw));else bad++;
+  });
+  return {list,tombs,bad,empty:q.empty};
+}
+// Combine this device's territories with the cloud's. preferCloud decides exact ties (Load: cloud, Save: this device).
+function ttSyncMerge(cloud,preferCloud){
+  const tombs=ttLoadTombs();
+  Object.keys(cloud.tombs).forEach(id=>{if(!tombs[id]||cloud.tombs[id]>tombs[id])tombs[id]=cloud.tombs[id]});
+  const byId={};cloud.list.forEach(t=>{byId[t.id]=t});
+  const out=[],removed=[],report={removed:[],added:[],kept:[]};
+  territoryRegistry.forEach(local=>{
+    const c=byId[local.id];delete byId[local.id];
+    const merged=c?(preferCloud?ttMergeTerritory(c,local):ttMergeTerritory(sanitizeTerritoryRecord(local),c)):sanitizeTerritoryRecord(local);
+    const del=tombs[local.id];
+    if(del){
+      if(ttEditTime(merged)>del){delete tombs[local.id];report.kept.push(merged.name);}
+      else{removed.push(merged);report.removed.push(merged.name);return;}
+    }
+    out.push(merged);
+  });
+  Object.values(byId).forEach(c=>{
+    if(tombs[c.id]){if(!(ttEditTime(c)>tombs[c.id]))return;delete tombs[c.id];}
+    out.push(c);report.added.push(c.name);
+  });
+  // Never remove the last active territory.
+  if(!out.some(t=>!t.archived)&&removed.length){removed.forEach(t=>{out.push(t);delete tombs[t.id]});report.removed=[];}
+  return {registry:out,tombs,report};
+}
+function ttApplySynced(res){
+  territoryRegistry=res.registry;
+  ttSaveTombs(res.tombs);
+  if(!territoryRegistry.some(t=>t.id===currentTerritoryId&&!t.archived))currentTerritoryId=(territoryRegistry.find(t=>!t.archived)||territoryRegistry[0]).id;
+  localStorage.setItem(TT_REG_KEY,JSON.stringify(territoryRegistry));
+  localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
+  allTerritoriesView=false;clearAllTerritoryViewLayers();
+  const current=ttCurrent();
+  ttLoadRecord(current); ttRebuildMap();
+  setTimeout(()=>ttCenterOnTerritory(current),60);
+  setTimeout(()=>ttCenterOnTerritory(current),260);
+}
+function ttSyncSummary(r){
+  const p=[];
+  if(r.removed.length)p.push(`Removed here because another device deleted ${r.removed.length===1?'it':'them'}: ${r.removed.join(', ')}.`);
+  if(r.added.length)p.push(`New from another device: ${r.added.join(', ')}.`);
+  if(r.kept.length)p.push(`Kept because it was changed after another device deleted it: ${r.kept.join(', ')}.`);
+  return p.length?' '+p.join(' '):'';
 }
 async function syncSaveCloud(){
   if(syncBusy)return;
@@ -1067,10 +1312,19 @@ async function syncSaveCloud(){
     const ref=workspaceRef();
     const existing=await ref.get();
     if(!existing.exists)throw Error('Shared space no longer exists.');
-    await writeTerritoriesInBatches(ref,territoryRegistry);
-    await ref.set({schemaVersion:2,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:firebaseUser.uid},{merge:true});
+    const cloudRev=Number(existing.data()?.rev||0);
+    if(cloudRev>ttSeenRev()&&!confirm('The shared territories were changed on another device since this device last loaded them.\n\nSave anyway? Nothing is simply overwritten: for each house the newest status and the newest note are kept, and the newest boundary edit wins.\n\nCancel = don\'t save now (tap Load All first to see the other changes).')){
+      syncSetStatus('Not saved. Tap Load All to get the other device\'s changes first.');
+      return;
+    }
+    ttSaveCurrent();
+    const res=ttSyncMerge(await ttReadCloud(ref),false);
+    await writeTerritoriesInBatches(ref,res.registry,res.tombs);
+    await ref.set({schemaVersion:3,rev:firebase.firestore.FieldValue.increment(1),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:firebaseUser.uid},{merge:true});
+    ttSetSeenRev(Number((await ref.get()).data()?.rev||0));
+    ttApplySynced(res);
     $('syncLast').textContent='Last saved: '+new Date().toLocaleString();
-    syncSetStatus('All territories saved to Firebase.',true);
+    syncSetStatus('All territories saved to Firebase.'+ttSyncSummary(res.report),true);
   }catch(e){
     console.error('Firebase save failed:',e);
     syncSetStatus('Cloud save failed: '+(e?.message||'unknown error'));
@@ -1086,33 +1340,31 @@ async function syncLoadCloud(fromJoin=false){
     const ref=workspaceRef();
     const snap=await ref.get();
     if(!snap.exists){syncSetStatus('No shared territory data exists for this code yet.');return}
-    const q=await ref.collection('territories').get();
-    if(q.empty){
+    const cloud=await ttReadCloud(ref);
+    if(cloud.empty){
       // The shared workspace exists but has not been populated yet. This device
       // can safely seed the empty shared space with its local territories.
       syncCloudLoaded=true;
+      ttSetSeenRev(Number(snap.data()?.rev||0));
       syncShowConnected();
       syncSetStatus('Shared space is empty. Your local territories are ready to be saved.',true);
       return;
     }
-    const incoming=[];
-    q.forEach(doc=>{const t=firestoreDecode(doc.data());if(validateTerritoryRecord(t))incoming.push(sanitizeTerritoryRecord(t))});
-    if(!incoming.length){syncSetStatus('Cloud data is invalid. Nothing was changed.');return}
-    if(!fromJoin && !confirm('Load the shared territories and replace the territories currently on this device?'))return;
-    territoryRegistry=incoming;
-    currentTerritoryId=territoryRegistry.some(t=>t.id===currentTerritoryId&&!t.archived)
-      ?currentTerritoryId:(territoryRegistry.find(t=>!t.archived)||territoryRegistry[0]).id;
-    localStorage.setItem(TT_REG_KEY,JSON.stringify(territoryRegistry));
-    localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
-    const current=ttCurrent();
-    ttLoadRecord(current); ttRebuildMap();
-    setTimeout(()=>ttCenterOnTerritory(current),60);
-    setTimeout(()=>ttCenterOnTerritory(current),260);
+    if(!cloud.list.length&&!Object.keys(cloud.tombs).length){syncSetStatus('Cloud data is invalid. Nothing was changed.');return}
+    if(!fromJoin && !confirm('Load the shared territories onto this device?\n\nChanges are merged: for each house the newest status and note are kept, the newest boundary edit wins, and territories deleted on another device are removed here.'))return;
+    ttSaveCurrent();
+    // Joining (the user confirmed "load its territories onto this device") replaces this device's list,
+    // as before, so a new device's starter territory is not added as a duplicate. Load All merges.
+    const res=(fromJoin&&cloud.list.length)
+      ?{registry:cloud.list,tombs:Object.assign(ttLoadTombs(),cloud.tombs),report:{removed:[],added:[],kept:[]}}
+      :ttSyncMerge(cloud,true);
+    ttApplySynced(res);
+    ttSetSeenRev(Number(snap.data()?.rev||0));
     localStorage.setItem('tt_last_cloud_sync',new Date().toISOString());
     syncCloudLoaded=true;
     $('syncLast').textContent='Last loaded: '+new Date().toLocaleString();
-    syncSetStatus('Shared territories loaded.',true);
-    if(!fromJoin)syncHide();
+    syncSetStatus('Shared territories loaded.'+ttSyncSummary(res.report)+(cloud.bad?` ${cloud.bad} damaged cloud item(s) were skipped.`:''),true);
+    if(!fromJoin&&!res.report.removed.length&&!res.report.kept.length)syncHide();
   }catch(e){
     console.error('Firebase load failed:',e);
     syncSetStatus('Cloud load failed: '+(e?.message||'unknown error'));
@@ -1123,6 +1375,7 @@ function syncDisconnect(){
   syncWorkspaceCode='';
   syncCloudLoaded=false;
   localStorage.removeItem('tt_firebase_workspace_code');
+  localStorage.removeItem(TT_SEEN_KEY);
   syncShowSetup();
   syncSetStatus('Disconnected. Local territory data is unchanged.');
 }
@@ -1131,7 +1384,7 @@ $('syncClose').addEventListener('click',syncHide);
 $('syncJoin').addEventListener('click',syncJoin);
 $('syncGenerate').addEventListener('click',()=>{$('syncCode').value=generateWorkspaceCode();$('syncCode').focus()});
 $('syncSave').addEventListener('click',syncSaveCloud);
-$('syncLoad').addEventListener('click',syncLoadCloud);
+$('syncLoad').addEventListener('click',()=>syncLoadCloud(false));
 $('syncDisconnect').addEventListener('click',syncDisconnect);
 
 // Initialize Firebase in the background. If Anonymous Auth is not enabled yet,
@@ -1297,7 +1550,9 @@ function closeEditor(save){
   if(!save && original){
     territory=original.territory;
     dnw=original.dnw;
-    dnwNames=original.dnwNames||dnwNames;
+    // Area names are saved by their own Save Name button, so keep them; just match the restored areas.
+    dnwNames=dnwNames.slice(0,dnw.length);
+    while(dnwNames.length<dnw.length) dnwNames.push(`Do Not Work Area ${dnwNames.length+1}`);
     refreshTerritoryDisplay();
     dnwLayers.forEach(layer=>{if(layer)map.removeLayer(layer)});
     dnwLabelLayers.forEach(layer=>{if(layer)map.removeLayer(layer)});
@@ -1308,13 +1563,15 @@ function closeEditor(save){
     localStorage.setItem('tt_geometry_stable',JSON.stringify({territory,dnw}));
     localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
   }else if(save){
+    const t=ttCurrent&&ttCurrent();
+    if(t&&(!original||JSON.stringify([original.territory,original.dnw])!==JSON.stringify([territory,dnw])))t.geoAt=ttNow();
     localStorage.setItem('tt_geometry_stable',JSON.stringify({territory,dnw}));
     localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
     if(typeof ttSaveCurrent==='function')ttSaveCurrent();
   }
   stopRoadMode();
   clearHandles();
-  editMode=false; addMode=false; addingDNW=false; activeDNWIndex=null; original=null;
+  editMode=false; addMode=false; addingDNW=false; activeDNWIndex=null; original=null; drawMode=false;
   $('editor').classList.remove('show');document.body.classList.remove('editor-open');
   $('dnwChooser').style.display='none';
   if($('territoryNameEditor'))$('territoryNameEditor').style.display='none';
@@ -1341,13 +1598,14 @@ $('editTerritory').addEventListener('click',()=>{
   $('territoryNameInput').value=current&&current.name ? current.name : ($('currentTerritoryName').textContent||'');
   $('followRoad').classList.remove('active');
   if(!Array.isArray(territory)||territory.length===0){
-    addMode=true;
+    addMode=true; drawMode=true;
     $('editorHelp').textContent='NEW TERRITORY: Tap the map to place boundary points. Add at least 3 points. Then you can drag, add, delete, or use Follow Road.';
     banner('NEW TERRITORY: TAP THE MAP TO PLACE POINT 1');
   }else{
     $('editorHelp').textContent='Edit the red territory boundary. Drag points, add points, or use Follow Road.';
     makeHandles();
     banner('EDITING TERRITORY');
+    setTimeout(()=>ttRevealPoints(territory),60);
   }
 });
 function setActiveDNW(idx){
@@ -1367,6 +1625,7 @@ function setActiveDNW(idx){
   dnwLayers.forEach((layer,i)=>{ if(layer) layer.setStyle({fillOpacity:i===idx?.62:.10,weight:i===idx?3:1}); });
   makeHandles();
   banner(`EDITING DO NOT WORK AREA ${idx+1}`);
+  setTimeout(()=>ttRevealPoints(dnw[idx]),60);
 }
 
 $('editDNW').addEventListener('click',()=>{
@@ -1389,6 +1648,14 @@ $('saveDNWName').addEventListener('click',()=>{
   if(!name){banner('Enter a name first');return}
   dnwNames[activeDNWIndex]=name;
   localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
+  // Save the name with the territory itself (otherwise it was lost on reload / territory switch).
+  const t=ttCurrent&&ttCurrent();
+  if(t){
+    const names=Array.isArray(t.dnwNames)?t.dnwNames.slice():[];
+    names[activeDNWIndex]=name;
+    for(let i=0;i<names.length;i++)if(typeof names[i]!=='string')names[i]=`Do Not Work Area ${i+1}`;
+    t.dnwNames=names; t.geoAt=ttNow(); ttSaveRegistry();
+  }
   refreshDNWLabel(activeDNWIndex);
   refreshDNWChooser();
   $('dnwSelect').value='dnw'+activeDNWIndex;
@@ -1432,6 +1699,7 @@ $('finishDNW').addEventListener('click',()=>{
   refreshDNWChooser();
   makeHandles();
   banner(`DO NOT WORK AREA ${idx+1} CREATED — YOU CAN NOW DRAG ITS BLUE POINTS`);
+  setTimeout(()=>ttRevealPoints(arr),60);
 });
 
 $('deleteDNWArea').addEventListener('click',()=>{
@@ -1471,6 +1739,7 @@ $('deleteDNWArea').addEventListener('click',()=>{
 
 $('addPoint').addEventListener('click',()=>{
  if(!editMode)return;
+ drawMode=false;
  stopRoadMode();addMode=true;window.selectedFreehandIndex=null;makeHandles();
  $('addPoint').classList.add('active');
  banner('ADD POINT: TAP EXACTLY WHERE YOU WANT THE BLUE POINT');
@@ -1504,8 +1773,6 @@ $('deletePoint').addEventListener('click',()=>{
      else refreshDNWLabel(currentDNWIndex());window.selectedFreehandIndex=null;makeHandles();
  banner('LAST POINT DELETED');
 });
-$('saveEdit').addEventListener('click',()=>closeEditor(true));
-$('cancelEdit').addEventListener('click',()=>closeEditor(false));
 
 function nearestSegmentIndex(arr,p){
  let best=Infinity,idx=0;
@@ -1536,10 +1803,17 @@ map.on('click',e=>{
    const arr=currentArray();
    if(!arr)return;
    const p=[e.latlng.lat,e.latlng.lng];
-   const insertAt=arr.length<3 ? arr.length : nearestSegmentIndex(arr,p)+1;
+   const insertAt=(arr.length<3||drawMode) ? arr.length : nearestSegmentIndex(arr,p)+1;
    arr.splice(insertAt,0,p);
    currentLayer().setLatLngs(arr);
    if(editorTarget!=='territory')refreshDNWLabel(currentDNWIndex());
+   if(drawMode&&editorTarget==='territory'){
+     // Drawing a new territory: stay in drawing mode so every tap places the next point.
+     refreshTerritoryDisplay();
+     makeHandles();
+     banner(arr.length<3?`NEW TERRITORY: POINT ${arr.length} PLACED — TAP POINT ${arr.length+1}`:`NEW TERRITORY: ${arr.length} POINTS — KEEP TAPPING, OR TAP SAVE`);
+     return;
+   }
    addMode=false;
    $('addPoint').classList.remove('active');
    makeHandles();
@@ -1549,7 +1823,7 @@ map.on('click',e=>{
 });
 $('followRoad').addEventListener('click',()=>{
  if(!editMode)return;
- addMode=false;roadMode=true;selectedPointIndices=[];pendingRoad=null;
+ addMode=false;drawMode=false;roadMode=true;selectedPointIndices=[];pendingRoad=null;
  if(roadPreview){map.removeLayer(roadPreview);roadPreview=null}
  $('roadControls').style.display='block';
  $('roadAdd').disabled=true; $('roadAdd').style.opacity='.5';
@@ -1557,6 +1831,7 @@ $('followRoad').addEventListener('click',()=>{
  makeHandles();
  $('roadName').textContent='STEP 1: Tap the first blue point.';
  banner('FOLLOW ROAD: TAP POINT 1');
+ setTimeout(()=>ttRevealPoints(currentArray()),60);
 });
 
 $('roadCancel').addEventListener('click',()=>{
@@ -1709,7 +1984,11 @@ async function loadHouses(){
 
   L.geoJSON(gj,{
     style:f=>buildingStyle(records[String(f.properties.OBJECTID)]?.status),
-    onEachFeature:(f,l)=>l.on('click',()=>openHouse(String(f.properties.OBJECTID),f))
+    onEachFeature:(f,l)=>l.on('click',()=>{
+      // While editing, a tap on a building is a map tap (place a point), not a house.
+      if(editMode||addingDNW)return;
+      openHouse(String(f.properties.OBJECTID),f);
+    })
   }).addTo(houseLayer);
  }catch(e){console.warn('Building layer unavailable',e)}
 }
@@ -1755,6 +2034,7 @@ document.querySelectorAll('[data-status]').forEach(b=>b.addEventListener('click'
  const rec={...(records[houseCurrent]||{})};
  if(status) rec.status=status;
  else delete rec.status;
+ rec.statusAt=ttNow();
  records[houseCurrent]=rec;
  localStorage.setItem('tt_house_records_stable',JSON.stringify(records));
  if(typeof ttSaveCurrent==='function')ttSaveCurrent();
@@ -1764,7 +2044,7 @@ document.querySelectorAll('[data-status]').forEach(b=>b.addEventListener('click'
  loadHouses();
 }));
 $('saveNote').addEventListener('click',()=>{
- if(!houseCurrent)return;records[houseCurrent]={...(records[houseCurrent]||{}),note:$('houseNote').value};localStorage.setItem('tt_house_records_stable',JSON.stringify(records));if(typeof ttSaveCurrent==='function')ttSaveCurrent();$('houseSheet').classList.remove('show');
+ if(!houseCurrent)return;const prevRec=records[houseCurrent]||{},newNote=$('houseNote').value;records[houseCurrent]={...prevRec,note:newNote};if(newNote!==(prevRec.note||''))records[houseCurrent].noteAt=ttNow();localStorage.setItem('tt_house_records_stable',JSON.stringify(records));if(typeof ttSaveCurrent==='function')ttSaveCurrent();$('houseSheet').classList.remove('show');
 });
 $('cancelHouse').addEventListener('click',()=>{
  houseCurrent=null;
@@ -1795,7 +2075,16 @@ $('remaining').addEventListener('click',()=>{
 $('remaining').textContent='Remaining';
 updateHouseButton();
 $('locate').addEventListener('click',()=>map.locate({setView:true,maxZoom:18,enableHighAccuracy:true}));
-map.on('locationfound',e=>L.circleMarker(e.latlng,{radius:8,color:'#fff',weight:3,fillColor:'#007aff',fillOpacity:1}).addTo(map).bindPopup('You are here').openPopup());
+let ttLocDot=null;
+map.on('locationfound',e=>{
+  if(ttLocDot)ttLocDot.setLatLng(e.latlng);
+  else ttLocDot=L.circleMarker(e.latlng,{radius:8,color:'#fff',weight:3,fillColor:'#007aff',fillOpacity:1}).addTo(map).bindPopup('You are here');
+  ttLocDot.openPopup();
+});
+map.on('locationerror',e=>{
+  banner(e&&e.code===1?'LOCATION IS BLOCKED FOR THIS SITE. ALLOW LOCATION IN YOUR BROWSER / PHONE SETTINGS TO USE MY LOCATION.':'COULD NOT FIND YOUR LOCATION. PLEASE TRY AGAIN.');
+  setTimeout(()=>banner(''),4000);
+});
 
 let cardOverlay=null;
 let cardMode=false;
@@ -1861,6 +2150,7 @@ $('resetDNW').addEventListener('click',()=>{
    territory=JSON.parse(JSON.stringify(original.territory||[]));
    refreshTerritoryDisplay(); clearHandles();
    addMode=false; roadMode=false;
+   drawMode=territory.length===0; if(drawMode)addMode=true;
    $('addPoint').classList.remove('active'); $('followRoad').classList.remove('active');
    makeHandles();
    banner('TERRITORY CHANGES RESET');
