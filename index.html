@@ -244,7 +244,7 @@ body.roads-open #roadPanel{display:flex}
 .tt-road-label{background:none;border:0}
 .tt-road-label span{display:inline-block;transform:translate(-50%,-50%);white-space:nowrap;background:#fff;border:2px solid #ff9500;border-radius:7px;padding:1px 6px;font:800 12px/1.25 -apple-system,system-ui,sans-serif;color:#7a3e00;box-shadow:0 1px 3px #0003}
 .tt-road-label.done span{border-color:#34c759;color:#1f6b33}
-.rvPop b{font-size:14px}.rvPop .small{margin-top:3px}.rvPop button{margin-top:7px;width:100%;min-height:36px}
+.tt-edge-tag{font-style:normal;font-weight:700;font-size:10px;color:#8a5a00;background:#fff3d6;border-radius:5px;padding:0 4px;margin-left:3px}.rvEdge{color:#8a5a00;font-weight:600}.rvPop b{font-size:14px}.rvPop .small{margin-top:3px}.rvPop button{margin-top:7px;width:100%;min-height:36px}
 /* All-territories map: coloured = checked out, grey = not checked out */
 .all-territory-label.avail{color:#666!important}
 .tt-all-legend{background:#fff;padding:6px 9px;border-radius:8px;font-size:12px;font-weight:700;box-shadow:0 1px 4px #0003;line-height:18px;max-width:210px}
@@ -2493,7 +2493,7 @@ map.on('moveend',()=>{if(housesVisible&&!editMode)loadHouses()});
 // changes waiting to be shared, and automatic sharing when the connection comes back.
 // Note: functions here can be called while the page is still starting, so they use
 // literal storage keys instead of constants declared below.
-const TT_APP_VERSION='2026.10.04-3';   // keep in step with VERSION in sw.js
+const TT_APP_VERSION='2026.10.04-4';   // keep in step with VERSION in sw.js
 // Offline map pictures: USGS The National Map "USGSTopo" (US Government, public domain, no account,
 // and downloading for offline use is allowed). OpenStreetMap's own tiles may NOT be downloaded ahead
 // of time, so they are only used live, while there is a connection.
@@ -2965,28 +2965,106 @@ function ttRoadsRefresh(){
   if(map.hasLayer(houseLayer))map.removeLayer(houseLayer);
   ttRoadsDraw();
 }
-// Densify long segments so a road that only crosses the territory is not missed, then keep the parts inside.
-function ttClipToPoly(pts,poly){
+// Road lines are cut to what can be worked: inside the territory and outside every Do Not Work area.
+// A road that runs ALONG the territory edge (or a Do Not Work edge) is kept as a boundary road:
+// only its inside side is worked, so it is drawn on that side and labelled "inside side only".
+// Version 2 of the saved road lines (older saved copies dropped or cut up boundary roads).
+const TT_ROAD_FMT=2, TT_EDGE_M=15, TT_EDGE_MIN_M=40;
+function ttXY(p){return [p[1]*85000,p[0]*111000];}
+function ttEdgeDist(poly,p){   // metres from p to the nearest side of poly, and that side's direction
+  const [px,py]=ttXY(p);let best=Infinity,dir=null;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const [ax,ay]=ttXY(poly[j]),[bx,by]=ttXY(poly[i]),dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy;
+    let u=l2?((px-ax)*dx+(py-ay)*dy)/l2:0;u=Math.max(0,Math.min(1,u));
+    const d=Math.hypot(ax+u*dx-px,ay+u*dy-py);if(d<best){best=d;dir=[dx,dy];}
+  }
+  return {d:best,dir};
+}
+function ttWorkable(poly,dnw,p){return ttInPoly(poly,p[0],p[1])&&!dnw.some(a=>ttInPoly(a,p[0],p[1]));}
+function ttClipRoad(pts,poly,dnw){
+  dnw=(dnw||[]).filter(a=>Array.isArray(a)&&a.length>=3);
   const dense=[];
   for(let i=0;i<pts.length;i++){
     if(i){
       const [a1,b1]=pts[i-1],[a2,b2]=pts[i];
-      const m=Math.hypot((a2-a1)*111000,(b2-b1)*85000), n=Math.min(200,Math.floor(m/30));
+      const m=Math.hypot((a2-a1)*111000,(b2-b1)*85000), n=Math.min(400,Math.floor(m/10));
       for(let k=1;k<n;k++)dense.push([a1+(a2-a1)*k/n,b1+(b2-b1)*k/n]);
     }
     dense.push(pts[i]);
   }
-  const runs=[]; let cur=null;
-  dense.forEach((p,i)=>{
-    if(ttInPoly(poly,p[0],p[1])){
-      if(!cur){cur=[];if(i)cur.push(dense[i-1]);runs.push(cur);}
-      cur.push(p);
-    }else if(cur){cur.push(p);cur=null;}
+  // in = workable; edge = within TT_EDGE_M of the territory edge or a Do Not Work edge; out = anything else
+  const info=dense.map(p=>{
+    const inT=ttInPoly(poly,p[0],p[1]),eT=ttEdgeDist(poly,p);let near=eT.d<=TT_EDGE_M?eT:null,by='territory',deep=!inT&&eT.d>TT_EDGE_M;
+    dnw.forEach(a=>{const inD=ttInPoly(a,p[0],p[1]),e=ttEdgeDist(a,p);if(inD&&e.d>TT_EDGE_M)deep=true;if(e.d<=TT_EDGE_M&&(!near||e.d<near.d)){near=e;by='dnw';}});
+    return {k:deep?'out':near?'edge':'in',near,by,ok:inT&&!dnw.some(a=>ttInPoly(a,p[0],p[1]))};
   });
+  // only a stretch that runs ALONG an edge (roughly parallel, at least TT_EDGE_MIN_M long) is a boundary road;
+  // where a road just crosses an edge it is an ordinary road, cut exactly at the edge
+  const len=(i,j)=>{let s=0;for(let x=i+1;x<=j;x++)s+=Math.hypot((dense[x][0]-dense[x-1][0])*111000,(dense[x][1]-dense[x-1][1])*85000);return s;};
+  info.forEach((f,i)=>{
+    if(f.k!=='edge')return;
+    const a=ttXY(dense[Math.max(0,i-1)]),b=ttXY(dense[Math.min(dense.length-1,i+1)]),rd=[b[0]-a[0],b[1]-a[1]],ed=f.near.dir;
+    const cos=ed?Math.abs(rd[0]*ed[0]+rd[1]*ed[1])/((Math.hypot(...rd)*Math.hypot(...ed))||1):0;
+    if(cos<0.85)f.k=f.ok?'in':'out';
+  });
+  for(let i=0;i<info.length;){
+    if(info[i].k!=='edge'){i++;continue;}
+    let j=i;while(j+1<info.length&&info[j+1].k==='edge')j++;
+    if(len(i,j)<TT_EDGE_MIN_M)for(let x=i;x<=j;x++)info[x].k=info[x].ok?'in':'out';
+    i=j+1;
+  }
+  // the exact point where a road leaves the workable area (between a workable and a non-workable point)
+  const cross=(a,b)=>{let lo=a,hi=b;for(let n=0;n<14;n++){const m=[(lo[0]+hi[0])/2,(lo[1]+hi[1])/2];if(ttWorkable(poly,dnw,m))lo=m;else hi=m;}return lo;};
+  const out=[];let cur=null;
   const r6=v=>Math.round(v*1e6)/1e6;
-  return runs.filter(r=>r.length>1).map(r=>r.map(p=>[r6(p[0]),r6(p[1])]));
+  dense.forEach((p,i)=>{
+    const k=info[i].k;
+    if(k==='out'){if(cur){if(cur.k==='in'&&info[i-1].ok)cur.pts.push(cross(dense[i-1],p));cur=null;}return;}
+    if(!cur||cur.k!==k){
+      // an ordinary piece never starts outside the workable area: after a boundary piece that ended just
+      // outside (or just inside a Do Not Work area) it starts exactly at the edge instead
+      const start=[];
+      if(cur&&(k==='edge'||info[i-1].ok))start.push(cur.pts[cur.pts.length-1]);
+      else if(i&&k==='in'&&info[i].ok)start.push(cross(p,dense[i-1]));
+      cur={k,by:info[i].by,pts:start};out.push(cur);
+    }
+    cur.pts.push(p);
+  });
+  // a few metres of ordinary road joined to a boundary piece (at a corner) belong to that boundary piece
+  out.forEach((l,i)=>{if(l.k!=='in'||len2(l.pts)>=20)return;const touch=o=>o&&o.k==='edge'&&(o.pts[o.pts.length-1]===l.pts[0]||o.pts[0]===l.pts[l.pts.length-1]);if(touch(out[i-1])||touch(out[i+1]))l.k='edge';});
+  const lines=[],sides=[];
+  out.filter(l=>l.pts.length>1&&len2(l.pts)>=5).forEach(l=>{
+    let side=0;
+    if(l.k==='edge'){   // which side is inside: look 20 m (about where the houses are) to each side
+      let L=0,Rt=0;
+      for(let i=1;i<l.pts.length;i++){
+        const a=l.pts[i-1],b=l.pts[i],dy=(b[0]-a[0])*111000,dx=(b[1]-a[1])*85000,n=Math.hypot(dx,dy);if(!n)continue;
+        const m=[(a[0]+b[0])/2,(a[1]+b[1])/2],ox=-dy/n*20,oy=dx/n*20;
+        if(ttWorkable(poly,dnw,[m[0]+oy/111000,m[1]+ox/85000]))L++;
+        if(ttWorkable(poly,dnw,[m[0]-oy/111000,m[1]-ox/85000]))Rt++;
+      }
+      side=L>Rt?1:Rt>L?-1:0;
+      if(!side&&!L)return;   // neither side can be worked
+    }
+    lines.push(l.pts.map(p=>[r6(p[0]),r6(p[1])]));sides.push(side);
+  });
+  return {lines,sides};
+  function len2(ps){let s=0;for(let x=1;x<ps.length;x++)s+=Math.hypot((ps[x][0]-ps[x-1][0])*111000,(ps[x][1]-ps[x-1][1])*85000);return s;}
 }
-async function ttFetchRoads(poly){
+// Offline with an older saved copy (saved before this version, or before the boundary / Do Not Work areas
+// were changed): cut it again on this device, so Do Not Work parts never show. Online it is downloaded again.
+function ttRoadsRecut(stored,t){
+  if(stored.fmt===TT_ROAD_FMT&&(stored.geoAt||'')===(t.geoAt||''))return stored;
+  const roads=[];
+  stored.roads.forEach(r=>{
+    const rd={key:r.key,name:r.name,lines:[],sides:[]};
+    (r.lines||[]).forEach(l=>{const c=ttClipRoad(l,t.territory,t.dnw);rd.lines.push(...c.lines);rd.sides.push(...c.sides);});
+    if(!rd.lines.length)return;
+    const n=rd.sides.filter(Boolean).length;rd.edge=!n?'':n===rd.sides.length?'all':'part';roads.push(rd);
+  });
+  return Object.assign({},stored,{roads});
+}
+async function ttFetchRoads(poly,dnw){
   const lats=poly.map(p=>p[0]),lngs=poly.map(p=>p[1]),m=0.0015;
   const S=Math.min(...lats)-m,N=Math.max(...lats)+m,W=Math.min(...lngs)-m,E=Math.max(...lngs)+m;
   const kinds='motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|service|track|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link';
@@ -2999,23 +3077,25 @@ async function ttFetchRoads(poly){
   (j.elements||[]).forEach(el=>{
     if(el.type!=='way'||!Array.isArray(el.geometry))return;
     const tg=el.tags||{}, nm=String(tg.name||tg.ref||'').trim(); if(!nm)return;   // unnamed driveways / lanes are left out
-    const runs=ttClipToPoly(el.geometry.map(g=>[g.lat,g.lon]),poly); if(!runs.length)return;
+    const cut=ttClipRoad(el.geometry.map(g=>[g.lat,g.lon]),poly,dnw); if(!cut.lines.length)return;
     const key=ttRoadKey(nm); if(!key)return;
-    (byKey[key]=byKey[key]||{key,name:nm,lines:[]}).lines.push(...runs);
+    const rd=(byKey[key]=byKey[key]||{key,name:nm,lines:[],sides:[]}); rd.lines.push(...cut.lines); rd.sides.push(...cut.sides);
   });
-  return Object.values(byKey).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+  // edge = 'all' when every piece is a boundary piece (inside side only), 'part' when some are
+  return Object.values(byKey).map(rd=>{const n=rd.sides.filter(Boolean).length;rd.edge=!n?'':n===rd.sides.length?'all':'part';return rd;})
+    .sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
 }
 // Road lines for a territory: stored copy if it matches the boundary (or if offline), else download and store.
 async function ttRoadLines(t,force){
   const key='roads:'+t.id;
   const stored=await ttIdbDo('packs','readonly',s=>s.get(key)).catch(()=>null);
-  if(!force&&stored&&Array.isArray(stored.roads)&&((stored.geoAt||'')===(t.geoAt||'')||!ttOnline()))return stored;
+  if(!force&&stored&&Array.isArray(stored.roads)&&(((stored.geoAt||'')===(t.geoAt||'')&&stored.fmt===TT_ROAD_FMT)||!ttOnline()))return ttRoadsRecut(stored,t);
   if(!ttOnline()){
-    if(stored&&Array.isArray(stored.roads))return stored;
+    if(stored&&Array.isArray(stored.roads))return ttRoadsRecut(stored,t);
     throw Error('Road view needs the road lines, and they are not saved on this device yet.\n\nWhile you have signal, open Territories and tap 📥 Get ready for offline (or 🔄 Update) for this territory, or open Road view once.');
   }
-  const roads=await ttFetchRoads(t.territory);
-  const rec={id:key,geoAt:t.geoAt||'',fetchedAt:ttNow(),roads};
+  const roads=await ttFetchRoads(t.territory,t.dnw);
+  const rec={id:key,geoAt:t.geoAt||'',fetchedAt:ttNow(),fmt:TT_ROAD_FMT,roads};
   await ttIdbDo('packs','readwrite',s=>s.put(rec,key)).catch(()=>{});
   return rec;
 }
@@ -3146,7 +3226,18 @@ function ttRoadLabelsShow(){
   else if(map.hasLayer(ttRoad.labels))map.removeLayer(ttRoad.labels);
 }
 map.on('zoomend',ttRoadLabelsShow);
-function ttRoadsDraw(){
+// A boundary piece is drawn as a narrower line moved to the inside side of the road (about 3.5 screen
+// pixels at any zoom), over the usual white road casing.
+function ttOffsetLine(l,side,metres){
+  if(!side)return l;
+  return l.map((p,i)=>{
+    const a=l[Math.max(0,i-1)],b=l[Math.min(l.length-1,i+1)],dy=(b[0]-a[0])*111000,dx=(b[1]-a[1])*85000,n=Math.hypot(dx,dy)||1;
+    const ox=-dy/n*metres*side,oy=dx/n*metres*side;return [p[0]+oy/111000,p[1]+ox/85000];
+  });
+}
+function ttRoadEdgeText(rd){return rd.edge==='all'?'Boundary road · work the inside side only':rd.edge==='part'?'Partly a boundary road · inside side only along the edge':'';}
+map.on('zoomend',()=>{if(ttRoad.on&&ttRoad.data&&ttRoad.data.roads.some(r=>r.edge))ttRoadsDraw(true);});
+function ttRoadsDraw(noList){
   if(!ttRoad.on||!ttRoad.data)return;
   const t=ttCurrent(); if(!t)return;
   if(ttRoad.layer)map.removeLayer(ttRoad.layer); if(ttRoad.labels)map.removeLayer(ttRoad.labels);
@@ -3155,15 +3246,17 @@ function ttRoadsDraw(){
     const done=ttRoadIsDone(t,rd), color=done?'#34c759':'#ff9500';
     const pop=e=>{L.DomEvent.stop(e);ttRoadPopup(rd,e.latlng);};
     L.polyline(rd.lines,{color:'#fff',weight:11,opacity:.85,lineCap:'round',interactive:false}).addTo(g);
-    L.polyline(rd.lines,{color,weight:7,opacity:.95,lineCap:'round',className:'tt-road '+(done?'tt-road-done':'tt-road-todo')}).on('click',pop).addTo(g);
+    const sides=rd.sides||[], inner=rd.lines.filter((l,i)=>!sides[i]), edge=rd.lines.map((l,i)=>sides[i]?ttOffsetLine(l,sides[i],3.5*40075016.686*Math.cos(l[0][0]*Math.PI/180)/Math.pow(2,map.getZoom()+8)):null).filter(Boolean);
+    if(inner.length)L.polyline(inner,{color,weight:7,opacity:.95,lineCap:'round',className:'tt-road '+(done?'tt-road-done':'tt-road-todo')}).on('click',pop).addTo(g);
+    if(edge.length)L.polyline(edge,{color,weight:4,opacity:.95,lineCap:'butt',className:'tt-road tt-road-edge '+(done?'tt-road-done':'tt-road-todo')}).on('click',pop).addTo(g);
     L.polyline(rd.lines,{color:'#000',weight:24,opacity:0,interactive:true,className:'tt-road-hit'}).on('click',pop).addTo(g);   // easier to tap
     ttRoadLabelPts(rd).forEach(pt=>{
-      L.marker(pt,{icon:L.divIcon({className:'tt-road-label'+(done?' done':''),html:'<span>'+escapeHtml(rd.name)+'</span>',iconSize:null}),keyboard:false})
+      L.marker(pt,{icon:L.divIcon({className:'tt-road-label'+(done?' done':''),html:'<span>'+escapeHtml(rd.name)+(rd.edge?' <i class="tt-edge-tag">inside side</i>':'')+'</span>',iconSize:null}),keyboard:false})
         .on('click',e=>{L.DomEvent.stop(e);ttRoadPopup(rd,L.latLng(pt));}).addTo(lab);
     });
   });
   ttRoad.layer=g.addTo(map); ttRoad.labels=lab; ttRoadLabelsShow();
-  ttRoadList(t);
+  if(!noList)ttRoadList(t);
 }
 function ttRoadList(t){
   const roads=ttRoad.data.roads, todo=roads.filter(r=>!ttRoadIsDone(t,r)), done=roads.filter(r=>ttRoadIsDone(t,r));
@@ -3175,7 +3268,7 @@ function ttRoadList(t){
     const nm=document.createElement('button'); nm.type='button'; nm.className='rvName';
     nm.innerHTML=`<i class="rvDot"></i><b></b><small></small>`;
     nm.querySelector('b').textContent=rd.name;
-    nm.querySelector('small').textContent=p?(p.total?(p.left?` ${p.left} of ${p.total} houses not marked`:` all ${p.total} houses marked`):''):'';
+    nm.querySelector('small').textContent=[rd.edge?(rd.edge==='all'?' ↔ boundary road · inside side only':' ↔ partly boundary · inside side only'):'',p?(p.total?(p.left?` ${p.left} of ${p.total} houses not marked`:` all ${p.total} houses marked`):''):''].filter(Boolean).join(' ·');
     nm.onclick=()=>{const m=ttRoadMid(rd);map.setView(m,Math.max(map.getZoom(),17));ttRoadPopup(rd,L.latLng(m));};
     const b=document.createElement('button'); b.type='button'; b.className='rvToggle';
     b.textContent=isDone?'↩︎ To work':'✅ Finished'; b.title=isDone?'Mark this road as still to work':'Mark this road as finished';
@@ -3191,9 +3284,11 @@ function ttRoadPopup(rd,latlng){
   const s=document.createElement('div'); s.className='small'; s.textContent=(done?'✅ Finished · ':'🟧 To work · ')+ttProgressText(p);
   const hint=document.createElement('div'); hint.className='small';
   if(!done&&p&&p.total&&!p.left)hint.textContent='Every house on this road has a mark.';
+  const edgeNote=document.createElement('div'); edgeNote.className='small rvEdge';
+  if(rd.edge)edgeNote.textContent='↔ '+ttRoadEdgeText(rd)+' (the other side is outside the territory or in a Do Not Work area; its houses are not counted).';
   const b=document.createElement('button'); b.type='button'; b.textContent=done?'↩︎ Mark as still to work':'✅ Mark road finished';
   b.onclick=()=>{ttSetRoad(rd.key,!done);map.closePopup();};
-  div.append(h,s,hint,b);
+  div.append(h,...(rd.edge?[edgeNote]:[]),s,hint,b);
   L.popup({autoPan:true,maxWidth:260}).setLatLng(latlng).setContent(div).openOn(map);
 }
 function ttSetRoad(key,done){
