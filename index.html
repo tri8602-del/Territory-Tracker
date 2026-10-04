@@ -216,6 +216,39 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
   .roadBtns{grid-template-columns:1fr 1fr}.roadBtns button{white-space:normal}
 }
 @media (min-width:601px) and (max-width:900px){#editor{width:300px}}
+/* Check Out button in Territories */
+.tmCheckOut{background:#ff9500!important;color:#fff!important}
+.tmCheckOut.on{background:#fff3e0!important;color:#8a4b00!important;box-shadow:inset 0 0 0 1px #ff9500}
+/* Road view */
+.tt-road-btn{background:#fff;border:2px solid rgba(0,0,0,.2);border-radius:8px;padding:6px 10px;font-weight:800;font-size:13px;color:#111;box-shadow:0 1px 4px #0002;cursor:pointer;touch-action:manipulation}
+body.editor-open .tt-road-btn{display:none}
+body.roads-open .bottom{display:none!important}
+body.roads-open .leaflet-tile-pane{opacity:.55}
+body.roads-open .leaflet-tile{filter:grayscale(1) contrast(.8) brightness(1.12)}
+#roadPanel{display:none;position:fixed;left:0;right:0;bottom:0;z-index:30000;background:#fff;box-shadow:0 -3px 14px #0003;border-radius:14px 14px 0 0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));height:38vh;height:38dvh;overflow:hidden;box-sizing:border-box;flex-direction:column}
+body.roads-open #roadPanel{display:flex}
+#rvList{flex:1 1 auto;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch}
+@media (max-width:600px){body.roads-open #map{bottom:0!important}}
+@media (min-width:601px){#roadPanel{left:auto;right:10px;bottom:10px;width:330px;border-radius:14px;height:auto;max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px)}}
+.rvHead{display:flex;align-items:center;gap:8px}.rvHead b{flex:1;font-size:15px}
+.rvLegend{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;margin:4px 0 4px;color:#555}
+.rvSw{display:inline-block;width:20px;height:6px;border-radius:3px;vertical-align:middle;margin-right:4px}
+.rvRow{display:flex;gap:6px;align-items:center;border-top:1px solid #eee;padding:2px 0}
+.rvName{flex:1;text-align:left;background:none!important;border:0!important;box-shadow:none!important;padding:6px 2px!important;color:#111!important;min-width:0;font-size:14px}
+.rvName small{display:block;color:#666;font-weight:400;font-size:11px;margin-left:18px}
+.rvDot{display:inline-block;width:12px;height:12px;border-radius:50%;background:#ff9500;margin-right:6px;vertical-align:-1px}
+.rvRow.done .rvDot{background:#34c759}.rvRow.done b{color:#1f6b33}
+.rvToggle{white-space:nowrap;font-size:12px!important;padding:6px 8px!important;min-height:34px}
+.rvBtns{display:flex;gap:8px;margin-top:8px}.rvBtns button{flex:1}
+#rvMsg{white-space:pre-line;margin:4px 0;color:#8a4b00}
+.tt-road-label{background:none;border:0}
+.tt-road-label span{display:inline-block;transform:translate(-50%,-50%);white-space:nowrap;background:#fff;border:2px solid #ff9500;border-radius:7px;padding:1px 6px;font:800 12px/1.25 -apple-system,system-ui,sans-serif;color:#7a3e00;box-shadow:0 1px 3px #0003}
+.tt-road-label.done span{border-color:#34c759;color:#1f6b33}
+.rvPop b{font-size:14px}.rvPop .small{margin-top:3px}.rvPop button{margin-top:7px;width:100%;min-height:36px}
+/* All-territories map: coloured = checked out, grey = not checked out */
+.all-territory-label.avail{color:#666!important}
+.tt-all-legend{background:#fff;padding:6px 9px;border-radius:8px;font-size:12px;font-weight:700;box-shadow:0 1px 4px #0003;line-height:18px;max-width:210px}
+.tt-all-legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-2px}
 </style>
 </head>
 <body>
@@ -223,6 +256,14 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 <header class="header"><h1>Territory Tracker</h1><p id="currentTerritoryName">Republic / Cardale</p><button id="netStatus" type="button" title="Connection and changes waiting to be shared">● Online</button></header>
 <button id="updateToast" type="button">New version available. Tap to reload</button>
 <div id="banner"></div><div id="map"></div>
+<section id="roadPanel" aria-label="Road view">
+<div class="rvHead"><b id="rvTitle">🛣️ Roads</b><button id="rvClose" type="button">✖ Close</button></div>
+<div id="rvSummary" class="small" style="font-weight:800"></div>
+<div class="small rvLegend"><span><i class="rvSw" style="background:#ff9500"></i>To work</span><span><i class="rvSw" style="background:#34c759"></i>Finished</span><span>Tap a road to change it</span><span id="rvZoomHint"></span></div>
+<div id="rvMsg" class="small"></div>
+<div id="rvList"></div>
+<div class="rvBtns"><button id="rvShare" type="button">📋 Share roads to work</button></div>
+</section>
 <div class="bottom">
 <div class="actions">
 <button id="territories" class="blue">🗂️ Territories</button>
@@ -485,6 +526,7 @@ function exportMapData(){
     startPoint:ttCurrent()?.startPoint||null,
     lastWorked:ttCurrent()?.lastWorked||null,
     checkInAt:ttCurrent()?.checkInAt||null,
+    roads:ttCurrent()?.roads||{},
     territoryName:ttCurrent()?.name||'Territory',
     exportedAt:new Date().toISOString()
   };
@@ -520,6 +562,12 @@ function importMapDataFile(file){
       records=keep?ttDropBefore(ttMergeRecords(records,fileRecords),checkInAt):ttRestampBefore(fileRecords,checkInAt);
       if(current){
         if(checkInAt){current.checkInAt=checkInAt;if(!(current.lastWorked>=checkInAt))current.lastWorked=checkInAt;}
+        // Road statuses follow the same rule as the houses (keep = merge, replace = the file's, stamped now).
+        const fileRoads=ttCleanRoads(data.roads);
+        let rds;
+        if(keep)rds=ttDropRoadsBefore(ttMergeRoads(ttCleanRoads(current.roads),fileRoads),checkInAt);
+        else{rds={};const now=ttNow();Object.keys(fileRoads).forEach(k=>{const r=fileRoads[k];if(!r.status)return;rds[k]=Object.assign({},r,(!r.statusAt||(checkInAt&&r.statusAt<=checkInAt))?{statusAt:now}:{});});}
+        if(Object.keys(rds).length)current.roads=rds;else delete current.roads;
         if(data.startPoint&&Number.isFinite(Number(data.startPoint.lat))&&Number.isFinite(Number(data.startPoint.lng))) current.startPoint={lat:Number(data.startPoint.lat),lng:Number(data.startPoint.lng),address:String(data.startPoint.address||'')};
         else delete current.startPoint;
         if(data.lastWorked&&String(data.lastWorked)>(current.lastWorked||'')) current.lastWorked=String(data.lastWorked);
@@ -787,6 +835,7 @@ function ttRebuildMap(){
   dnwLayers.length=0; dnwLabelLayers.length=0;
   dnw.forEach((_,i)=>ensureDNWLayer(i)); refreshAllDNWLabels();
   houseLayer.clearLayers(); if(housesVisible)loadHouses();
+  ttRoadsRefresh();
 }
 let allTerritoryLayers=[];
 let allTerritoriesView=false;
@@ -794,10 +843,12 @@ let allTerritoriesView=false;
 function clearAllTerritoryViewLayers(){
   allTerritoryLayers.forEach(layer=>{if(layer)map.removeLayer(layer)});
   allTerritoryLayers=[];
+  if(clearAllTerritoryViewLayers.legend){map.removeControl(clearAllTerritoryViewLayers.legend);clearAllTerritoryViewLayers.legend=null;}
 }
 
-function ttShowAllTerritories(){
+function ttShowAllTerritories(keepView){
   if(editMode)closeEditor(false);
+  if(ttRoad&&ttRoad.on)ttRoadClose();
   const candidates=territoryRegistry.filter(t=>!t.archived && Array.isArray(t.territory) && t.territory.length>=3);
   if(!candidates.length){
     banner('No active territories have boundary maps yet.');
@@ -821,21 +872,25 @@ function ttShowAllTerritories(){
 
   candidates.forEach((t,index)=>{
     const isCurrent=t.id===currentTerritoryId;
-    const color=palette[index%palette.length];
+    // Checked-out territories keep their colour; the others are grey.
+    const out=t.checkedOut===true;
+    const color=out?palette[index%palette.length]:'#8e8e93';
     const layer=L.polygon(t.territory,{
       color,
       weight:isCurrent?5:3,
-      opacity:.95,
+      opacity:out?.95:.8,
+      dashArray:out?null:'6 5',
       fillColor:color,
-      fillOpacity:isCurrent?.16:.08
+      fillOpacity:out?(isCurrent?.22:.16):.06,
+      className:out?'tt-all-out':'tt-all-avail'
     }).addTo(map);
 
     // Show the territory name directly on the overview map.
     // Tooltips have pointer-events disabled so the polygon remains clickable.
-    layer.bindTooltip(escapeHtml(t.name),{
+    layer.bindTooltip(escapeHtml(t.name)+(out?'<br><small>'+escapeHtml(ttCheckOutText(t))+'</small>':''),{
       permanent:true,
       direction:'center',
-      className:'all-territory-label',
+      className:'all-territory-label'+(out?' out':' avail'),
       opacity:.95
     });
 
@@ -847,13 +902,19 @@ function ttShowAllTerritories(){
     allTerritoryLayers.push(layer);
   });
 
-  if(bounds.isValid()){
+  if(bounds.isValid()&&!keepView){
     map.invalidateSize(false);
     map.fitBounds(bounds,{padding:[30,30],maxZoom:16,animate:false});
   }
+  const nOut=candidates.filter(t=>t.checkedOut===true).length;
+  const lg=L.control({position:'bottomleft'});
+  lg.onAdd=()=>{const d=L.DomUtil.create('div','tt-all-legend');d.id='allLegend';
+    d.innerHTML=`<div><i style="background:#d71920"></i>Coloured = checked out (${nOut})</div><div><i style="background:#8e8e93"></i>Grey = not checked out (${candidates.length-nOut})</div>`;return d;};
+  lg.addTo(map); clearAllTerritoryViewLayers.legend=lg;
 
   $('tmViewAll').textContent='📍 Return to Current Territory';
   ttRenderManager();
+  if(keepView)return;
   banner('ALL ACTIVE TERRITORIES');
   setTimeout(()=>banner(''),1600);
 }
@@ -900,7 +961,7 @@ function ttRenderManager(){
     items.forEach(t=>{
       const row=document.createElement('div');row.className='tmRow';
       const name=document.createElement('div');name.className='tmRowName';name.textContent=t.name;
-      const meta=document.createElement('div');meta.className='tmMeta';meta.textContent=(t.id===currentTerritoryId?'CURRENT • ':'')+((t.territory||[]).length)+' boundary points • '+(t.lastWorked&&!isNaN(new Date(t.lastWorked))?'Checked in '+new Date(t.lastWorked).toLocaleDateString():'Not checked in yet');
+      const meta=document.createElement('div');meta.className='tmMeta';meta.textContent=(t.id===currentTerritoryId?'CURRENT • ':'')+((t.territory||[]).length)+' boundary points • '+(t.lastWorked&&!isNaN(new Date(t.lastWorked))?'Checked in '+new Date(t.lastWorked).toLocaleDateString():'Not checked in yet')+(t.checkedOut&&!t.archived?' • '+ttCheckOutText(t):'');
       const open=document.createElement('button');
       open.textContent=t.archived?'↩️ Restore':'Open';
       open.disabled=!t.archived && t.id===currentTerritoryId;
@@ -917,9 +978,14 @@ function ttRenderManager(){
       const chk=document.createElement('button');
       chk.textContent='✅ Check In';chk.className='tmCheckIn';chk.style.minWidth='88px';
       chk.onclick=()=>ttCheckIn(t.id);
+      const cko=document.createElement('button');
+      cko.className='tmCheckOut'+(t.checkedOut?' on':''); cko.style.minWidth='88px';
+      cko.textContent=t.checkedOut?'📤 Checked out ✓':'📤 Check Out';
+      cko.title=t.checkedOut?'Tap if it is not checked out after all (houses are not changed)':'Mark this territory as checked out';
+      cko.onclick=()=>ttToggleCheckOut(t.id);
       const off=ttOfflineRow(t);
 
-      if(t.archived)row.append(name,meta,open,del);else row.append(name,meta,open,chk,del,off);
+      if(t.archived)row.append(name,meta,open,del);else row.append(name,meta,open,cko,chk,del,off);
       list.appendChild(row);
     });
   }
@@ -928,7 +994,7 @@ function ttRenderManager(){
 // Export one territory as a backup file (same format as Export Map Data).
 function ttExportTerritory(t){
   const payload={version:1,territory:t.territory||[],dnw:t.dnw||[],dnwNames:t.dnwNames||[],records:t.records||{},
-    startPoint:t.startPoint||null,lastWorked:t.lastWorked||null,checkInAt:t.checkInAt||null,territoryName:t.name||'Territory',exportedAt:new Date().toISOString()};
+    startPoint:t.startPoint||null,lastWorked:t.lastWorked||null,checkInAt:t.checkInAt||null,roads:t.roads||{},territoryName:t.name||'Territory',exportedAt:new Date().toISOString()};
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
@@ -944,17 +1010,21 @@ function ttCheckIn(id){
   let marks=0,notes=0,keep=0;
   Object.values(t.records||{}).forEach(r=>{if(r.status)marks++;if(r.note)notes++;if(r.pnote)keep++;});
   const p=n=>n===1?'':'s';
-  if(!confirm(`Check in "${t.name}"?\n\n• ${marks} house mark${p(marks)} go back to Not Worked\n• ${notes} note${p(notes)} will be cleared\n• ${keep} permanent note${p(keep)} ⭐ will be kept\n\nThe check-in date is saved. Use Cloud Sync > Save All to share it.`))return;
+  const fin=Object.values(t.roads||{}).filter(r=>r.status==='done').length;
+  if(!confirm(`Check in "${t.name}"?\n\n• ${marks} house mark${p(marks)} go back to Not Worked\n• ${notes} note${p(notes)} will be cleared\n• ${keep} permanent note${p(keep)} ⭐ will be kept`+(fin?`\n• ${fin} finished road${p(fin)} go back to To work`:'')+(t.checkedOut?`\n• it will no longer show as checked out${t.checkedOutBy?' by '+t.checkedOutBy:''}`:'')+`\n\nThe check-in date is saved. Use Cloud Sync > Save All to share it.`))return;
   if(confirm('Download a backup of this territory first?\n\nOK = download a backup file, then check in.\nCancel = check in without a backup.'))ttExportTerritory(t);
   const at=ttNow();
   t.records=ttDropBefore(t.records,at);
-  t.checkInAt=at; t.lastWorked=at; ttDirty();
+  t.checkInAt=at; t.lastWorked=at;
+  t.roads=ttDropRoadsBefore(t.roads,at); if(!Object.keys(t.roads).length)delete t.roads;
+  t.checkedOut=false; delete t.checkedOutBy; t.checkOutAt=at;
+  ttDirty();
   if(id===currentTerritoryId){
     records=ttClone(t.records);
     localStorage.setItem('tt_house_records_stable',JSON.stringify(records));
     loadHouses();
   }
-  ttSaveRegistry(); ttRenderManager();
+  ttSaveRegistry(); ttRenderManager(); ttRoadsRefresh(); if(allTerritoriesView)ttShowAllTerritories(true);
   banner(`CHECKED IN: ${t.name} (${keep} PERMANENT NOTE${keep===1?'':'S'} KEPT)`); setTimeout(()=>banner(''),3000);
 }
 function ttShowManager(){ttRenderManager();$('territoryManager').classList.add('show');}
@@ -1101,6 +1171,7 @@ function ttImportAsNew(file){
       if(d.startPoint&&Number.isFinite(Number(d.startPoint.lat))&&Number.isFinite(Number(d.startPoint.lng)))t.startPoint={lat:Number(d.startPoint.lat),lng:Number(d.startPoint.lng),address:String(d.startPoint.address||'')};
       if(d.lastWorked)t.lastWorked=String(d.lastWorked);
       if(typeof d.checkInAt==='string'&&d.checkInAt)t.checkInAt=d.checkInAt;
+      {const rds=ttDropRoadsBefore(ttCleanRoads(d.roads),t.checkInAt);if(Object.keys(rds).length)t.roads=rds;}
       while(t.dnwNames.length<t.dnw.length)t.dnwNames.push(`Do Not Work Area ${t.dnwNames.length+1}`);
       t.dnwNames=t.dnwNames.slice(0,t.dnw.length);
       territoryRegistry.push(t); ttDirty(); currentTerritoryId=t.id; localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
@@ -1249,6 +1320,11 @@ function sanitizeTerritoryRecord(t,stats){
     out.startPoint={lat:Number(t.startPoint.lat),lng:Number(t.startPoint.lng),address:String(t.startPoint.address||'')};
   }
   if(t.lastWorked)out.lastWorked=String(t.lastWorked);
+  // roads = finished / to-work status per road name; checkedOut / checkedOutBy / checkOutAt = who has the territory
+  const roads=ttCleanRoads(t.roads); if(Object.keys(roads).length)out.roads=roads;
+  if(t.checkedOut===true)out.checkedOut=true;
+  if(t.checkedOut===true&&typeof t.checkedOutBy==='string'&&t.checkedOutBy.trim())out.checkedOutBy=t.checkedOutBy.trim().slice(0,40);
+  if(typeof t.checkOutAt==='string'&&t.checkOutAt)out.checkOutAt=t.checkOutAt;
   return out;
 }
 // Firestore does not allow an array to contain another array. Territory
@@ -1375,8 +1451,44 @@ function ttEditTime(t){
   let m=t.geoAt||'';
   if((t.metaAt||'')>m)m=t.metaAt;
   if((t.checkInAt||'')>m)m=t.checkInAt;
+  if((t.checkOutAt||'')>m)m=t.checkOutAt;
+  Object.values(t.roads||{}).forEach(r=>{if((r.statusAt||'')>m)m=r.statusAt;});
   Object.values(t.records||{}).forEach(r=>{if((r.statusAt||'')>m)m=r.statusAt;if((r.noteAt||'')>m)m=r.noteAt;if((r.pnoteAt||'')>m)m=r.pnoteAt;});
   return m;
+}
+// Road status per road: {key:{status:'done'|'',statusAt,name}}. A road set back to "to work" keeps its time so the newest change wins.
+function ttRoadKey(n){return String(n||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/ /g,'_').slice(0,80);}
+function ttCleanRoads(v){
+  const out={}; if(!v||typeof v!=='object'||Array.isArray(v))return out;
+  Object.keys(v).forEach(k=>{
+    const r=v[k], key=ttRoadKey(k); if(!r||typeof r!=='object'||!key)return;
+    const o={}; if(r.status==='done')o.status='done';
+    if(typeof r.statusAt==='string'&&r.statusAt)o.statusAt=r.statusAt;
+    if(typeof r.name==='string'&&r.name.trim())o.name=r.name.trim().slice(0,80);
+    if(o.status||o.statusAt)out[key]=o;
+  });
+  return out;
+}
+function ttMergeRoads(a,b){
+  const out={};
+  new Set([...Object.keys(a||{}),...Object.keys(b||{})]).forEach(k=>{
+    const x=(a&&a[k])||{},y=(b&&b[k])||{},s=ttPick(x,y,'status'),o={};
+    if(s.status)o.status=s.status; if(s.statusAt)o.statusAt=s.statusAt;
+    const nm=x.name||y.name; if(nm)o.name=nm;
+    if(o.status||o.statusAt)out[k]=o;
+  });
+  return out;
+}
+function ttReshareIfNeeded(reg,cloudList){
+  const by={}; (cloudList||[]).forEach(c=>{by[c.id]=c;});
+  const sig=r=>Object.keys(r||{}).sort().map(k=>k+':'+(r[k].status||'')+'@'+(r[k].statusAt||'')).join('|');
+  const co=t=>(t.checkedOut===true?'1':'0')+'@'+(t.checkOutAt||'');
+  if((reg||[]).some(t=>{const c=by[t.id];return c&&(sig(t.roads)!==sig(ttCleanRoads(c.roads))||co(t)!==co(c));}))ttDirty();
+}
+function ttDropRoadsBefore(roads,at){
+  if(!at)return roads||{};
+  const out={}; Object.keys(roads||{}).forEach(k=>{const r=roads[k];if(r&&r.statusAt&&r.statusAt>at)out[k]=r;});
+  return out;
 }
 // Merge two copies of one territory. Houses: newest status and newest note win, separately.
 // Boundary + Do Not Work areas: the newest edit wins. Name/archive: the newest change wins. Ties keep a.
@@ -1394,6 +1506,14 @@ function ttMergeTerritory(a,b){
   const ci=[a.checkInAt,b.checkInAt].filter(Boolean).sort().pop();
   if(ci)out.checkInAt=ci;else delete out.checkInAt;
   out.records=ttDropBefore(ttMergeRecords(a.records,b.records),ci);
+  // Roads: newest status per road wins; statuses from before the newest check-in are dropped.
+  const rd=ttDropRoadsBefore(ttMergeRoads(ttCleanRoads(a.roads),ttCleanRoads(b.roads)),ci);
+  if(Object.keys(rd).length)out.roads=rd;else delete out.roads;
+  // Checked out: the newest check-out / check-in change wins.
+  const co=(b.checkOutAt||'')>(a.checkOutAt||'')?b:a;
+  delete out.checkedOut; delete out.checkedOutBy; delete out.checkOutAt;
+  if(co.checkedOut===true){out.checkedOut=true;if(co.checkedOutBy)out.checkedOutBy=String(co.checkedOutBy).slice(0,40);}
+  if(co.checkOutAt)out.checkOutAt=co.checkOutAt;
   if((b.updatedAt||'')>(out.updatedAt||''))out.updatedAt=b.updatedAt;
   return out;
 }
@@ -1440,10 +1560,11 @@ function ttApplySynced(res,quiet=false,remerge=false){
   if(!territoryRegistry.some(t=>t.id===currentTerritoryId&&!t.archived))currentTerritoryId=(territoryRegistry.find(t=>!t.archived)||territoryRegistry[0]).id;
   localStorage.setItem(TT_REG_KEY,JSON.stringify(territoryRegistry));
   localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
+  const wasAll=allTerritoriesView;
   allTerritoriesView=false;clearAllTerritoryViewLayers();
   const current=ttCurrent();
   ttLoadRecord(current); ttRebuildMap();
-  if(quiet)return;   // automatic sync: keep the map where it is
+  if(quiet){if(wasAll)ttShowAllTerritories(true);return;}   // automatic sync: keep the map where it is
   setTimeout(()=>ttCenterOnTerritory(current),60);
   setTimeout(()=>ttCenterOnTerritory(current),260);
 }
@@ -1524,6 +1645,7 @@ async function syncLoadCloud(fromJoin=false){
       :ttSyncMerge(cloud,true);
     ttApplySynced(res);
     ttSetSeenRev(Number(snap.data()?.rev||0));
+    ttReshareIfNeeded(res.registry,cloud.list);
     localStorage.setItem('tt_last_cloud_sync',new Date().toISOString());
     syncCloudLoaded=true;
     $('syncLast').textContent='Last loaded: '+new Date().toLocaleString();
@@ -2371,7 +2493,7 @@ map.on('moveend',()=>{if(housesVisible&&!editMode)loadHouses()});
 // changes waiting to be shared, and automatic sharing when the connection comes back.
 // Note: functions here can be called while the page is still starting, so they use
 // literal storage keys instead of constants declared below.
-const TT_APP_VERSION='2026.10.04-2';   // keep in step with VERSION in sw.js
+const TT_APP_VERSION='2026.10.04-3';   // keep in step with VERSION in sw.js
 // Offline map pictures: USGS The National Map "USGSTopo" (US Government, public domain, no account,
 // and downloading for offline use is allowed). OpenStreetMap's own tiles may NOT be downloaded ahead
 // of time, so they are only used live, while there is a connection.
@@ -2474,6 +2596,7 @@ async function ttQuietLoad(){
     ttApplySynced(res,true);
     ttSetSeenRev(Number(snap.data()?.rev||0));
     syncCloudLoaded=true;
+    ttReshareIfNeeded(res.registry,cloud.list);
     localStorage.setItem('tt_last_cloud_sync',new Date().toISOString());
     $('syncLast').textContent='Last updated automatically: '+new Date().toLocaleString();
   }catch(e){console.warn('Automatic update will try again later:',e?.message||e);}
@@ -2623,7 +2746,7 @@ async function ttPrepareOffline(id){
   if(poly.length<3){alert('This territory has no boundary yet. Draw it first (Edit Territory): the offline copy covers the area inside the boundary.');return;}
   const plan=ttTilesFor(poly);
   const mb=Math.max(1,Math.round(plan.keys.length*25/1024));
-  if(!confirm(`Get "${t.name||'this territory'}" ready for offline?\n\nThis downloads about ${plan.keys.length} map pictures (about ${mb} MB) and the building outlines, and keeps them on this device.\n\nUse Wi-Fi if you can. It can take a few minutes; keep the app open.`))return;
+  if(!confirm(`Get "${t.name||'this territory'}" ready for offline?\n\nThis downloads about ${plan.keys.length} map pictures (about ${mb} MB), the building outlines and the road lines, and keeps them on this device.\n\nUse Wi-Fi if you can. It can take a few minutes; keep the app open.`))return;
   ttPrepareOffline.busy=id;
   const st=ttPrepState[id]={text:'Starting…'};
   const paint=()=>{const el=document.querySelector(`.tmOffline[data-id="${id}"] .tmOffText`);if(el)el.textContent='⏳ '+st.text;};
@@ -2640,6 +2763,10 @@ async function ttPrepareOffline(id){
       st.text=`Downloading building outlines… ${found.size}`; paint();
     }
     const buildings=[...found.values()];
+    // 1b. road lines for Road view (if the road server is busy, the rest still works offline)
+    st.text='Downloading road lines…'; paint();
+    let roadCount=null;
+    try{const rr=await ttRoadLines(t,true);roadCount=rr.roads.length;}catch(e){console.warn('Road lines not saved:',e);}
     // 2. map pictures (4 at a time; ones already stored are reused)
     const have=new Set(await ttIdbDo('tiles','readonly',s=>s.getAllKeys()).catch(()=>[]));
     let done=0, missing=0, bytes=0, next=0;
@@ -2677,7 +2804,7 @@ async function ttPrepareOffline(id){
     await ttIdbDo('packs','readwrite',s=>s.put(pack,id));
     // 3. tidy up map pictures that no territory needs any more
     const old=ttPackSummaries();
-    const sums=Object.assign({},old,{[id]:{preparedAt,geoAt:t.geoAt||'',tiles:tiles.length,missing,maxZ:plan.maxZ,buildings:buildings.length,bytes}});
+    const sums=Object.assign({},old,{[id]:{preparedAt,geoAt:t.geoAt||'',tiles:tiles.length,missing,maxZ:plan.maxZ,buildings:buildings.length,roads:roadCount,bytes}});
     ttSavePackSummaries(sums);
     ttPackFeatures.c&&delete ttPackFeatures.c[id];
     await ttRemoveUnusedTiles();
@@ -2709,6 +2836,7 @@ async function ttClearOffline(id,ask=true){
   const sums=ttPackSummaries(); delete sums[id]; ttSavePackSummaries(sums);
   ttPackFeatures.c&&delete ttPackFeatures.c[id];
   await ttIdbDo('packs','readwrite',s=>s.delete(id)).catch(()=>{});
+  await ttIdbDo('packs','readwrite',s=>s.delete('roads:'+id)).catch(()=>{});
   await ttRemoveUnusedTiles();
   if($('territoryManager').classList.contains('show'))ttRenderManager();
 }
@@ -2741,7 +2869,7 @@ function ttOfflineRow(t){
   const btns=[];
   if(ttPrepState[t.id]){txt.textContent='⏳ '+ttPrepState[t.id].text;box.append(txt);return box;}
   const p=ttPackState(t);
-  const detail=s=>`${s.tiles} map pictures · ${s.buildings} buildings · ${ttMB(s.bytes||0)}`;
+  const detail=s=>`${s.tiles} map pictures · ${s.buildings} buildings · `+(s.roads==null?'road lines not saved (tap Update) · ':`${s.roads} roads · `)+ttMB(s.bytes||0);
   if(p.state==='none'){
     txt.textContent='📴 Not ready for offline';
     btns.push(mk('📥 Get ready for offline',()=>ttPrepareOffline(t.id),'Download this territory\'s map and buildings for use without signal'));
@@ -2824,6 +2952,301 @@ setTimeout(()=>{ttCheckPacks();if(localStorage.getItem('tt_storage_persisted')!=
 // "Online" can be wrong (Wi-Fi without internet, one bar of signal): check once at start.
 if(navigator.onLine)setTimeout(ttNetCheck,1000);
 if(ttOnline())setTimeout(()=>ttAutoSync(),3000);
+
+// ===================== Road view + Check Out =====================
+// Road view: only the road lines of the current territory, like highlighting a paper map.
+// Road lines come from OpenStreetMap (Overpass); they are kept on this device (and saved by
+// "Get ready for offline"). Only each road's finished / to-work status is shared through the code.
+var ttRoad={on:false,layer:null,labels:null,data:null,tid:null};
+function ttRoadsRefresh(){
+  if(!ttRoad||!ttRoad.on)return;
+  const t=ttCurrent();
+  if(!t||t.id!==ttRoad.tid||allTerritoriesView){ttRoadClose();return}
+  if(map.hasLayer(houseLayer))map.removeLayer(houseLayer);
+  ttRoadsDraw();
+}
+// Densify long segments so a road that only crosses the territory is not missed, then keep the parts inside.
+function ttClipToPoly(pts,poly){
+  const dense=[];
+  for(let i=0;i<pts.length;i++){
+    if(i){
+      const [a1,b1]=pts[i-1],[a2,b2]=pts[i];
+      const m=Math.hypot((a2-a1)*111000,(b2-b1)*85000), n=Math.min(200,Math.floor(m/30));
+      for(let k=1;k<n;k++)dense.push([a1+(a2-a1)*k/n,b1+(b2-b1)*k/n]);
+    }
+    dense.push(pts[i]);
+  }
+  const runs=[]; let cur=null;
+  dense.forEach((p,i)=>{
+    if(ttInPoly(poly,p[0],p[1])){
+      if(!cur){cur=[];if(i)cur.push(dense[i-1]);runs.push(cur);}
+      cur.push(p);
+    }else if(cur){cur.push(p);cur=null;}
+  });
+  const r6=v=>Math.round(v*1e6)/1e6;
+  return runs.filter(r=>r.length>1).map(r=>r.map(p=>[r6(p[0]),r6(p[1])]));
+}
+async function ttFetchRoads(poly){
+  const lats=poly.map(p=>p[0]),lngs=poly.map(p=>p[1]),m=0.0015;
+  const S=Math.min(...lats)-m,N=Math.max(...lats)+m,W=Math.min(...lngs)-m,E=Math.max(...lngs)+m;
+  const kinds='motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|service|track|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link';
+  const q=`[out:json][timeout:25];way["highway"~"^(${kinds})$"](${S.toFixed(5)},${W.toFixed(5)},${N.toFixed(5)},${E.toFixed(5)});out tags geom;`;
+  let r;
+  try{r=await ttWithTimeout(fetch('https://overpass-api.de/api/interpreter?data='+encodeURIComponent(q)),45000);}
+  catch(e){throw Error('The road lines could not be downloaded (no connection, or the map server is busy). Please try again in a minute.');}
+  if(!r.ok)throw Error('The road lines could not be downloaded (the map server is busy). Please try again in a minute.');
+  const j=await r.json(), byKey={};
+  (j.elements||[]).forEach(el=>{
+    if(el.type!=='way'||!Array.isArray(el.geometry))return;
+    const tg=el.tags||{}, nm=String(tg.name||tg.ref||'').trim(); if(!nm)return;   // unnamed driveways / lanes are left out
+    const runs=ttClipToPoly(el.geometry.map(g=>[g.lat,g.lon]),poly); if(!runs.length)return;
+    const key=ttRoadKey(nm); if(!key)return;
+    (byKey[key]=byKey[key]||{key,name:nm,lines:[]}).lines.push(...runs);
+  });
+  return Object.values(byKey).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+}
+// Road lines for a territory: stored copy if it matches the boundary (or if offline), else download and store.
+async function ttRoadLines(t,force){
+  const key='roads:'+t.id;
+  const stored=await ttIdbDo('packs','readonly',s=>s.get(key)).catch(()=>null);
+  if(!force&&stored&&Array.isArray(stored.roads)&&((stored.geoAt||'')===(t.geoAt||'')||!ttOnline()))return stored;
+  if(!ttOnline()){
+    if(stored&&Array.isArray(stored.roads))return stored;
+    throw Error('Road view needs the road lines, and they are not saved on this device yet.\n\nWhile you have signal, open Territories and tap 📥 Get ready for offline (or 🔄 Update) for this territory, or open Road view once.');
+  }
+  const roads=await ttFetchRoads(t.territory);
+  const rec={id:key,geoAt:t.geoAt||'',fetchedAt:ttNow(),roads};
+  await ttIdbDo('packs','readwrite',s=>s.put(rec,key)).catch(()=>{});
+  return rec;
+}
+// Which houses are on which road: each building goes to the nearest road within about 60 m.
+function ttAssignHouses(roads,feats,t){
+  const poly=t.territory, dn=(t.dnw||[]).filter(a=>Array.isArray(a)&&a.length>=3);
+  const segs=[];
+  roads.forEach(rd=>{rd.houses=[];rd.lines.forEach(l=>{for(let i=1;i<l.length;i++)segs.push([rd,l[i-1],l[i]]);});});
+  const seen=new Set();
+  feats.forEach(f=>{
+    const bb=f.bbox, oid=f.properties?.OBJECTID; if(!bb||oid==null||seen.has(String(oid)))return;
+    const lat=(bb[1]+bb[3])/2,lng=(bb[0]+bb[2])/2;
+    if(!ttInPoly(poly,lat,lng)||dn.some(a=>ttInPoly(a,lat,lng)))return;
+    seen.add(String(oid));
+    let best=null,bd=60;
+    for(const [rd,a,b] of segs){
+      const ax=(a[1]-lng)*85000,ay=(a[0]-lat)*111000,bx=(b[1]-lng)*85000,by=(b[0]-lat)*111000;
+      const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy;
+      let u=l2?-(ax*dx+ay*dy)/l2:0; u=Math.max(0,Math.min(1,u));
+      const d=Math.hypot(ax+u*dx,ay+u*dy);
+      if(d<bd){bd=d;best=rd;}
+    }
+    if(best)best.houses.push(String(oid));
+  });
+}
+async function ttRoadHouses(t){
+  const sums=ttPackSummaries();
+  if(sums[t.id]){const f=await ttPackFeatures(t.id);if(f.length)return f;}
+  if(!ttOnline())return null;
+  ttRoadHouses.c=ttRoadHouses.c||{};
+  const ck=t.id+'|'+(t.geoAt||'');
+  if(!ttRoadHouses.c[ck]){
+    ttRoadHouses.c[ck]=(async()=>{
+      const lats=t.territory.map(p=>p[0]),lngs=t.territory.map(p=>p[1]),m=0.0008,step=0.02;
+      const S=Math.min(...lats)-m,N=Math.max(...lats)+m,W=Math.min(...lngs)-m,E=Math.max(...lngs)+m, found=new Map();
+      for(let y=S;y<N;y+=step)for(let x=W;x<E;x+=step)await ttFetchBuildings(y,x,Math.min(N,y+step),Math.min(E,x+step),0,found);
+      return [...found.values()];
+    })().catch(e=>{delete ttRoadHouses.c[ck];return null;});
+  }
+  return ttRoadHouses.c[ck];
+}
+function ttRoadIsDone(t,rd){const r=(t&&t.roads||{})[rd.key];return !!(r&&r.status==='done');}
+function ttRoadProgress(rd){
+  if(!Array.isArray(rd.houses))return null;
+  let w=0,nh=0,other=0;
+  rd.houses.forEach(id=>{const s=(records[id]||{}).status;if(s==='worked')w++;else if(s==='nothome')nh++;else if(s)other++;});
+  return {total:rd.houses.length,worked:w,nothome:nh,other,left:rd.houses.length-w-nh-other};
+}
+function ttProgressText(p){
+  if(!p)return 'House counts show once the building outlines are on this device.';
+  if(!p.total)return 'No houses found along this road.';
+  return `${p.total} house${p.total===1?'':'s'} · ${p.worked} worked · ${p.nothome} not home${p.other?` · ${p.other} other`:''} · ${p.left} not marked`;
+}
+async function ttRoadOpen(){
+  if(editMode){banner('FINISH THE EDIT FIRST');setTimeout(()=>banner(''),2000);return}
+  if(allTerritoriesView)ttShowCurrentTerritory();
+  if(typeof cardMode!=='undefined'&&cardMode)enterLiveMapMode();
+  ttSaveCurrent();
+  const t=ttCurrent(); if(!t)return;
+  if(!Array.isArray(t.territory)||t.territory.length<3){alert('This territory has no boundary yet. Draw it first (Edit Territory), then Road view can show its roads.');return;}
+  ttRoad.on=true; ttRoad.tid=t.id; ttRoad.data=null;
+  document.body.classList.add('roads-open'); ttFitBottomBar();
+  $('roadViewBtn').textContent='✖ Close roads';
+  if(map.hasLayer(houseLayer))map.removeLayer(houseLayer);
+  map.closePopup();
+  $('rvTitle').textContent='🛣️ Roads · '+t.name; $('rvSummary').textContent=''; $('rvList').innerHTML=''; $('rvMsg').textContent='Loading the roads…';
+  ttRoadFit(t);
+  try{
+    const rec=await ttRoadLines(t);
+    if(!ttRoad.on||ttRoad.tid!==t.id)return;
+    ttRoad.data=rec; ttRoad.at=rec.fetchedAt;
+    $('rvMsg').textContent=rec.roads.length?'':'No named roads were found inside this boundary.';
+    ttRoadsDraw();
+    const feats=await ttRoadHouses(t);
+    if(!ttRoad.on||ttRoad.data!==rec)return;
+    if(feats){ttAssignHouses(rec.roads,feats,t);ttRoadsDraw();}
+  }catch(e){
+    if(ttRoad.on&&ttRoad.tid===t.id)$('rvMsg').textContent=e.message||String(e);
+  }
+}
+// Fit the territory into the part of the map the road list does not cover.
+function ttRoadFit(t){
+  const b=L.latLngBounds(t.territory); if(!b.isValid())return;
+  map.invalidateSize(false);
+  const p=$('roadPanel').getBoundingClientRect(), wide=innerWidth>600;
+  map.fitBounds(b,{paddingTopLeft:[20,54],paddingBottomRight:wide?[p.width+30,20]:[20,p.height+16],animate:false});
+}
+function ttRoadClose(){
+  if(!ttRoad.on)return;
+  ttRoad.on=false;
+  if(ttRoad.layer)map.removeLayer(ttRoad.layer); if(ttRoad.labels)map.removeLayer(ttRoad.labels);
+  ttRoad.layer=ttRoad.labels=null; map.closePopup();
+  document.body.classList.remove('roads-open'); ttFitBottomBar();
+  $('roadViewBtn').textContent='🛣️ Roads';
+  if(!allTerritoriesView&&!map.hasLayer(houseLayer))houseLayer.addTo(map);
+  if(housesVisible&&!editMode)loadHouses();
+}
+function ttRoadMid(rd){
+  let best=rd.lines[0],bl=-1;
+  rd.lines.forEach(l=>{let s=0;for(let i=1;i<l.length;i++)s+=Math.hypot(l[i][0]-l[i-1][0],l[i][1]-l[i-1][1]);if(s>bl){bl=s;best=l;}});
+  let tot=0;const seg=[];for(let i=1;i<best.length;i++){const d=Math.hypot(best[i][0]-best[i-1][0],best[i][1]-best[i-1][1]);seg.push(d);tot+=d;}
+  let half=tot/2;
+  for(let i=1;i<best.length;i++){const d=seg[i-1];if(half<=d&&d>0){const u=half/d;return [best[i-1][0]+(best[i][0]-best[i-1][0])*u,best[i-1][1]+(best[i][1]-best[i-1][1])*u];}half-=d;}
+  return best[0];
+}
+// Where a road's name goes: the middle of a short piece, or every 600 m along a long one (like a paper map).
+function ttRoadLabelPts(rd){
+  const out=[], m=(a,b)=>Math.hypot((b[0]-a[0])*111000,(b[1]-a[1])*85000);
+  rd.lines.forEach(l=>{
+    let tot=0; for(let i=1;i<l.length;i++)tot+=m(l[i-1],l[i]);
+    if(tot<60)return;
+    const at=tot<500?[tot/2]:[]; for(let x=250;x<tot-100;x+=600)at.push(x);
+    let i=1,run=0;
+    at.forEach(x=>{
+      while(i<l.length&&run+m(l[i-1],l[i])<x){run+=m(l[i-1],l[i]);i++;}
+      if(i>=l.length)return;
+      const d=m(l[i-1],l[i]),u=d?(x-run)/d:0, p=[l[i-1][0]+(l[i][0]-l[i-1][0])*u,l[i-1][1]+(l[i][1]-l[i-1][1])*u];
+      if(!out.some(q=>m(q,p)<150))out.push(p);
+    });
+  });
+  if(!out.length)out.push(ttRoadMid(rd));
+  return out;
+}
+function ttRoadLabelsShow(){
+  if(!ttRoad.on||!ttRoad.labels)return;
+  $('rvZoomHint').textContent=map.getZoom()>=14?'':'Zoom in to see the road names on the map.';
+  if(map.getZoom()>=14){if(!map.hasLayer(ttRoad.labels))ttRoad.labels.addTo(map);}
+  else if(map.hasLayer(ttRoad.labels))map.removeLayer(ttRoad.labels);
+}
+map.on('zoomend',ttRoadLabelsShow);
+function ttRoadsDraw(){
+  if(!ttRoad.on||!ttRoad.data)return;
+  const t=ttCurrent(); if(!t)return;
+  if(ttRoad.layer)map.removeLayer(ttRoad.layer); if(ttRoad.labels)map.removeLayer(ttRoad.labels);
+  const g=L.layerGroup(), lab=L.layerGroup();
+  ttRoad.data.roads.forEach(rd=>{
+    const done=ttRoadIsDone(t,rd), color=done?'#34c759':'#ff9500';
+    const pop=e=>{L.DomEvent.stop(e);ttRoadPopup(rd,e.latlng);};
+    L.polyline(rd.lines,{color:'#fff',weight:11,opacity:.85,lineCap:'round',interactive:false}).addTo(g);
+    L.polyline(rd.lines,{color,weight:7,opacity:.95,lineCap:'round',className:'tt-road '+(done?'tt-road-done':'tt-road-todo')}).on('click',pop).addTo(g);
+    L.polyline(rd.lines,{color:'#000',weight:24,opacity:0,interactive:true,className:'tt-road-hit'}).on('click',pop).addTo(g);   // easier to tap
+    ttRoadLabelPts(rd).forEach(pt=>{
+      L.marker(pt,{icon:L.divIcon({className:'tt-road-label'+(done?' done':''),html:'<span>'+escapeHtml(rd.name)+'</span>',iconSize:null}),keyboard:false})
+        .on('click',e=>{L.DomEvent.stop(e);ttRoadPopup(rd,L.latLng(pt));}).addTo(lab);
+    });
+  });
+  ttRoad.layer=g.addTo(map); ttRoad.labels=lab; ttRoadLabelsShow();
+  ttRoadList(t);
+}
+function ttRoadList(t){
+  const roads=ttRoad.data.roads, todo=roads.filter(r=>!ttRoadIsDone(t,r)), done=roads.filter(r=>ttRoadIsDone(t,r));
+  $('rvSummary').textContent=roads.length?`${todo.length} to work · ${done.length} finished`:'';
+  const list=$('rvList'); list.innerHTML='';
+  [...todo,...done].forEach(rd=>{
+    const isDone=ttRoadIsDone(t,rd), p=ttRoadProgress(rd);
+    const row=document.createElement('div'); row.className='rvRow'+(isDone?' done':''); row.dataset.key=rd.key;
+    const nm=document.createElement('button'); nm.type='button'; nm.className='rvName';
+    nm.innerHTML=`<i class="rvDot"></i><b></b><small></small>`;
+    nm.querySelector('b').textContent=rd.name;
+    nm.querySelector('small').textContent=p?(p.total?(p.left?` ${p.left} of ${p.total} houses not marked`:` all ${p.total} houses marked`):''):'';
+    nm.onclick=()=>{const m=ttRoadMid(rd);map.setView(m,Math.max(map.getZoom(),17));ttRoadPopup(rd,L.latLng(m));};
+    const b=document.createElement('button'); b.type='button'; b.className='rvToggle';
+    b.textContent=isDone?'↩︎ To work':'✅ Finished'; b.title=isDone?'Mark this road as still to work':'Mark this road as finished';
+    b.onclick=()=>ttSetRoad(rd.key,!isDone);
+    row.append(nm,b); list.appendChild(row);
+  });
+}
+function ttRoadPopup(rd,latlng){
+  const t=ttCurrent(); if(!t)return;
+  const done=ttRoadIsDone(t,rd), p=ttRoadProgress(rd);
+  const div=document.createElement('div'); div.className='rvPop';
+  const h=document.createElement('b'); h.textContent=rd.name;
+  const s=document.createElement('div'); s.className='small'; s.textContent=(done?'✅ Finished · ':'🟧 To work · ')+ttProgressText(p);
+  const hint=document.createElement('div'); hint.className='small';
+  if(!done&&p&&p.total&&!p.left)hint.textContent='Every house on this road has a mark.';
+  const b=document.createElement('button'); b.type='button'; b.textContent=done?'↩︎ Mark as still to work':'✅ Mark road finished';
+  b.onclick=()=>{ttSetRoad(rd.key,!done);map.closePopup();};
+  div.append(h,s,hint,b);
+  L.popup({autoPan:true,maxWidth:260}).setLatLng(latlng).setContent(div).openOn(map);
+}
+function ttSetRoad(key,done){
+  const t=ttCurrent(); if(!t||!ttRoad.data)return;
+  const rd=ttRoad.data.roads.find(r=>r.key===key); if(!rd)return;
+  t.roads=t.roads||{};
+  t.roads[key]=done?{status:'done',statusAt:ttNow(),name:rd.name}:{status:'',statusAt:ttNow(),name:rd.name};
+  ttSaveRegistry(); ttDirty(); ttRoadsDraw();
+  banner((done?'FINISHED: ':'TO WORK: ')+rd.name.toUpperCase()); setTimeout(()=>banner(''),1500);
+}
+async function ttRoadShare(){
+  const t=ttCurrent(); if(!t||!ttRoad.data)return;
+  const todo=ttRoad.data.roads.filter(r=>!ttRoadIsDone(t,r)).map(r=>r.name);
+  const text=todo.length?`${t.name} – roads to work: ${todo.join(', ')}`:`${t.name} – every road is finished.`;
+  try{
+    if(navigator.share){await navigator.share({text});return;}
+    await navigator.clipboard.writeText(text); $('rvMsg').textContent='Copied: '+text;
+  }catch(e){ if(e&&e.name==='AbortError')return; $('rvMsg').textContent=text; }
+}
+const TTRoadCtl=L.Control.extend({options:{position:'topright'},onAdd(){
+  const b=L.DomUtil.create('button','tt-road-btn'); b.type='button'; b.id='roadViewBtn'; b.textContent='🛣️ Roads';
+  b.title='Road view: only the roads, coloured to work / finished';
+  L.DomEvent.disableClickPropagation(b); L.DomEvent.on(b,'click',()=>ttRoad.on?ttRoadClose():ttRoadOpen());
+  return b;
+}});
+new TTRoadCtl().addTo(map);
+$('rvClose').addEventListener('click',ttRoadClose);
+$('rvShare').addEventListener('click',ttRoadShare);
+
+// ---- Check Out (shared through the code, so everyone can see who has which territory) ----
+function ttCheckOutText(t){
+  if(!t.checkedOut)return '';
+  const d=t.checkOutAt&&!isNaN(new Date(t.checkOutAt))?new Date(t.checkOutAt).toLocaleDateString([], {month:'short',day:'numeric'}):'';
+  return '📤 Checked out'+(t.checkedOutBy?' by '+t.checkedOutBy:'')+(d?' '+d:'');
+}
+function ttToggleCheckOut(id){
+  if(editMode)closeEditor(false);
+  const t=territoryRegistry.find(x=>x.id===id); if(!t)return;
+  if(t.checkedOut){
+    if(!confirm(`"${t.name}" is checked out${t.checkedOutBy?' by '+t.checkedOutBy:''}.\n\nMark it as not checked out?\n\nHouses, notes and roads are not changed. When a territory has been worked and is being returned, use ✅ Check In instead.`))return;
+    t.checkedOut=false; delete t.checkedOutBy;
+  }else{
+    const by=prompt(`Check out "${t.name}"?\n\nWho has it? Everyone using the same shared code will see this name (you can leave it blank).`,localStorage.getItem('tt_my_name_v1')||'');
+    if(by===null)return;
+    const nm=String(by).trim().slice(0,40); if(nm)localStorage.setItem('tt_my_name_v1',nm);
+    t.checkedOut=true; if(nm)t.checkedOutBy=nm; else delete t.checkedOutBy;
+  }
+  t.checkOutAt=ttNow();
+  ttSaveRegistry(); ttDirty(); ttRenderManager();
+  if(allTerritoriesView)ttShowAllTerritories();
+  banner((t.checkedOut?'CHECKED OUT: ':'NOT CHECKED OUT: ')+t.name.toUpperCase()); setTimeout(()=>banner(''),2000);
+}
+
 loadHouses();
 })();
 </script>
