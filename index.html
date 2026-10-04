@@ -176,9 +176,9 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 #netStatus{position:absolute;right:10px;bottom:8px;border:0;border-radius:12px;padding:4px 9px;font-size:11px;font-weight:700;line-height:13px;background:#e8f8ec;color:#1f7a35;white-space:nowrap;text-align:left;max-width:46vw;z-index:6}
 #netStatus.off{background:#eceff1;color:#333}
 #netStatus.warn{background:#fff4c7;color:#7a5a00}
-@media (max-width:600px){#netStatus{right:6px;bottom:auto;top:calc(env(safe-area-inset-top) + 6px);font-size:10px;line-height:12px;padding:3px 7px;max-width:110px;white-space:normal}}
+@media (max-width:600px){#updateToast{top:calc(env(safe-area-inset-top) + 66px)}#netStatus{right:6px;bottom:auto;top:calc(env(safe-area-inset-top) + 6px);font-size:10px;line-height:12px;padding:3px 7px;max-width:110px;white-space:normal}}
 /* "New version" prompt */
-#updateToast{display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--tt-bottom,130px) + 12px);z-index:46000;background:#111;color:#fff;border:0;border-radius:22px;padding:11px 18px;font-weight:700;font-size:14px;box-shadow:0 4px 16px #0005}
+#updateToast{display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top) + 92px);max-width:92vw;z-index:46000;background:#111;color:#fff;border:0;border-radius:22px;padding:11px 18px;font-weight:700;font-size:14px;box-shadow:0 4px 16px #0005}
 #updateToast.show{display:block}
 /* Offline map: where no stored map picture exists, a plain background with the boundary and buildings */
 .leaflet-container{background:#eef0ea}
