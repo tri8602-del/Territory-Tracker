@@ -1171,20 +1171,30 @@ function showFirebaseDiagnostic(err){
   console.error('Territory Tracker Firebase error:', err);
 }
 
+// Time limits for the shared-space steps (a test can shorten them with tt_sync_timeout_ms).
+function ttSyncMs(ms){const v=Number(localStorage.getItem('tt_sync_timeout_ms'));return v>0?v:ms;}
+function ttLimit(p,ms){return ttWithTimeout(p,ttSyncMs(ms));}
+function ttSyncErr(e){return e&&e.message==='timed out'?'it took too long (weak or no connection). Please check the signal and try again.':(e?.message||'unknown error');}
 async function ensureFirebase(){
   if(firebaseReady && firebaseUser && firestore)return true;
+  // One connection attempt at a time: Join waits for the one started when the app opened.
+  if(ensureFirebase.p)return ensureFirebase.p;
+  ensureFirebase.p=ensureFirebaseOnce().finally(()=>{ensureFirebase.p=null;});
+  return ensureFirebase.p;
+}
+async function ensureFirebaseOnce(){
   try{
     if(!firebase.apps.length)firebase.initializeApp(firebaseConfig);
     firestore=firebase.firestore();
-    await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
-    if(!firebase.auth().currentUser) await firebase.auth().signInAnonymously();
+    await ttLimit(firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL),20000);
+    if(!firebase.auth().currentUser) await ttLimit(firebase.auth().signInAnonymously(),25000);
     firebaseUser=firebase.auth().currentUser;
     firebaseReady=!!firebaseUser;
     if(firebaseReady && $('syncSheet')) syncSetStatus('Firebase connected. Enter your shared territory code.',true);
     return firebaseReady;
   }catch(e){
     console.error('Firebase initialization failed:',e);
-    syncSetStatus('Firebase connection failed. Check Shared Cloud Sync.',false);
+    syncSetStatus(e&&e.message==='timed out'?'Could not reach the shared space: the connection timed out. Check the signal and try again.':'Firebase connection failed. Check Shared Cloud Sync.',false);
     return false;
   }
 }
@@ -1280,20 +1290,29 @@ function workspaceRef(){
   return firestore.collection('workspaces').doc(workspaceIdFromCode(syncWorkspaceCode));
 }
 async function syncJoin(){
-  if(syncBusy)return;
+  if(syncJoin.running)return;   // already joining: the button is disabled and says so
   const code=normalizeWorkspaceCode($('syncCode').value);
   if(!TT_CODE_RE.test(code)||code.replace(/-/g,'').length<8){syncSetStatus('Enter a shared code of 8 to 32 letters, numbers or hyphens (at least 8 letters or numbers).');return}
   if(code.replace(/-/g,'').length<12&&!confirm('This shared code is short, so it is easier to guess. Anyone with the code can see and change these territories.\n\nTip: tap Generate New Code for a long code.\n\nUse this short code anyway?'))return;
-  syncBusy=true;
+  const btn=$('syncJoin'), label=btn.textContent, prevCode=syncWorkspaceCode;
+  let reached=false;
+  syncJoin.running=true; btn.disabled=true; btn.textContent='Joining…';
+  syncSetStatus('Joining… this can take a few seconds.');
   try{
+    // An automatic update may be finishing: wait for it (up to 30 seconds) instead of ignoring the tap.
+    for(let i=0;syncBusy&&i<60;i++)await new Promise(r=>setTimeout(r,500));
+    if(syncBusy){syncSetStatus('Another update is still running. Please wait a moment and tap Join again.');return}
+    syncBusy=true;
     if(!(await ensureFirebase()))return;
+    syncSetStatus('Joining… connected, looking up the shared code.');
     syncWorkspaceCode=code;
     localStorage.setItem('tt_firebase_workspace_code',code);
     const ref=workspaceRef();
-    const snap=await ref.get();
+    const snap=await ttLimit(ref.get(),25000);
+    reached=true;
     if(!snap.exists){
       ttSaveCurrent();
-      await ref.set({schemaVersion:3,rev:1,createdAt:firebase.firestore.FieldValue.serverTimestamp(),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),createdBy:firebaseUser.uid});
+      await ttLimit(ref.set({schemaVersion:3,rev:1,createdAt:firebase.firestore.FieldValue.serverTimestamp(),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),createdBy:firebaseUser.uid}),30000);
       await writeTerritoriesInBatches(ref,territoryRegistry,ttLoadTombs());
       ttSetSeenRev(1);
       syncCloudLoaded=true;
@@ -1301,12 +1320,12 @@ async function syncJoin(){
       $('syncLast').textContent='Created: '+new Date().toLocaleString();
     }else{
       syncCloudLoaded=false;
-      const existing=await ref.collection('territories').get();
+      const existing=await ttLimit(ref.collection('territories').get(),30000);
       if(existing.empty){
         ttSaveCurrent();
         await writeTerritoriesInBatches(ref,territoryRegistry,ttLoadTombs());
-        await ref.set({schemaVersion:3,rev:firebase.firestore.FieldValue.increment(1),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:firebaseUser.uid},{merge:true});
-        ttSetSeenRev(Number((await ref.get()).data()?.rev||0));
+        await ttLimit(ref.set({schemaVersion:3,rev:firebase.firestore.FieldValue.increment(1),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:firebaseUser.uid},{merge:true}),30000);
+        ttSetSeenRev(Number((await ttLimit(ref.get(),25000)).data()?.rev||0));
         syncCloudLoaded=true;
         syncSetStatus('Connected and uploaded your current territories.',true);
       }else{
@@ -1321,8 +1340,10 @@ async function syncJoin(){
     syncShowConnected();
   }catch(e){
     console.error('Firebase join failed:',e);
-    syncSetStatus('Could not join that shared space: '+(e?.message||'unknown error'));
-  }finally{syncBusy=false}
+    // The shared code was never reached: this device stays as it was before the tap.
+    if(!reached&&!syncCloudLoaded){syncWorkspaceCode=prevCode;if(prevCode)localStorage.setItem('tt_firebase_workspace_code',prevCode);else localStorage.removeItem('tt_firebase_workspace_code');}
+    syncSetStatus('Could not join that shared space: '+ttSyncErr(e));
+  }finally{syncBusy=false;syncJoin.running=false;btn.disabled=false;btn.textContent=label;}
 }
 function chunkArray(arr,size){
   const out=[];
@@ -1340,7 +1361,7 @@ async function writeTerritoriesInBatches(ref,items,tombs){
     if(!chunk.length)continue;
     const batch=firestore.batch();
     chunk.forEach(([id,data])=>batch.set(ref.collection('territories').doc(id),data));
-    await batch.commit();
+    await ttLimit(batch.commit(),45000);
   }
 }
 const TT_TOMBS_KEY='tt_deleted_territories_v1', TT_SEEN_KEY='tt_sync_seen_v1';
@@ -1435,7 +1456,7 @@ function ttSyncSummary(r){
 }
 // auto=true: the automatic share when the connection comes back (no questions, no map jumps).
 async function syncSaveCloud(auto=false){
-  if(syncBusy)return;
+  if(syncBusy){if(!auto)syncSetStatus('Another update is still running. Please wait a moment and try again.');return}
   if(!auto&&!ttOnline()){syncSetStatus('No connection. Your changes are saved on this device and will be shared automatically when you are back online.');return}
   if(!auto&&!syncCloudLoaded){syncSetStatus('Load the shared territories before saving changes.');return}
   if(!(await ensureFirebase()))return;
@@ -1443,7 +1464,7 @@ async function syncSaveCloud(auto=false){
   syncBusy=true; syncSetStatus('Saving all territories to Firebase…');
   try{
     const ref=workspaceRef();
-    const existing=await ref.get();
+    const existing=await ttLimit(ref.get(),25000);
     if(!existing.exists)throw Error('Shared space no longer exists.');
     const cloudRev=Number(existing.data()?.rev||0);
     const startedAt=ttNow();
@@ -1452,10 +1473,10 @@ async function syncSaveCloud(auto=false){
       return;
     }
     ttSaveCurrent();
-    const res=ttSyncMerge(await ttReadCloud(ref),false);
+    const res=ttSyncMerge(await ttLimit(ttReadCloud(ref),30000),false);
     await writeTerritoriesInBatches(ref,res.registry,res.tombs);
-    await ref.set({schemaVersion:3,rev:firebase.firestore.FieldValue.increment(1),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:firebaseUser.uid},{merge:true});
-    const newRev=Number((await ref.get()).data()?.rev||0);
+    await ttLimit(ref.set({schemaVersion:3,rev:firebase.firestore.FieldValue.increment(1),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:firebaseUser.uid},{merge:true}),30000);
+    const newRev=Number((await ttLimit(ref.get(),25000)).data()?.rev||0);
     ttClearPending(startedAt);
     syncCloudLoaded=true;
     // Someone started editing a boundary while this was being saved: keep their edit untouched and
@@ -1469,11 +1490,11 @@ async function syncSaveCloud(auto=false){
     if(auto&&$('syncSheet').classList.contains('show'))syncShowConnected();
   }catch(e){
     if(auto){console.warn('Automatic sync will try again later:',e?.message||e);ttNetCheck();}
-    else{console.error('Firebase save failed:',e);syncSetStatus('Cloud save failed: '+(e?.message||'unknown error'));}
+    else{console.error('Firebase save failed:',e);syncSetStatus('Cloud save failed: '+ttSyncErr(e)+' Your changes are kept on this device.');}
   }finally{syncBusy=false;ttUpdateNet();}
 }
 async function syncLoadCloud(fromJoin=false){
-  if(syncBusy&&!fromJoin)return;
+  if(syncBusy&&!fromJoin){syncSetStatus('Another update is still running. Please wait a moment and try again.');return}
   if(!ttOnline()){syncSetStatus('No connection. Load All needs a connection; everything on this device keeps working.');return}
   if(!(await ensureFirebase()))return;
   if(!syncWorkspaceCode){syncSetStatus('Join a shared space first.');return}
@@ -1481,9 +1502,9 @@ async function syncLoadCloud(fromJoin=false){
   syncSetStatus('Loading all territories from Firebase…');
   try{
     const ref=workspaceRef();
-    const snap=await ref.get();
+    const snap=await ttLimit(ref.get(),25000);
     if(!snap.exists){syncSetStatus('No shared territory data exists for this code yet.');return}
-    const cloud=await ttReadCloud(ref);
+    const cloud=await ttLimit(ttReadCloud(ref),30000);
     if(cloud.empty){
       // The shared workspace exists but has not been populated yet. This device
       // can safely seed the empty shared space with its local territories.
@@ -1510,7 +1531,7 @@ async function syncLoadCloud(fromJoin=false){
     if(!fromJoin&&!res.report.removed.length&&!res.report.kept.length)syncHide();
   }catch(e){
     console.error('Firebase load failed:',e);
-    syncSetStatus('Cloud load failed: '+(e?.message||'unknown error'));
+    syncSetStatus('Cloud load failed: '+ttSyncErr(e)+' Nothing on this device was changed.');
   }finally{if(!fromJoin)syncBusy=false}
 }
 function syncDisconnect(){
@@ -2350,7 +2371,7 @@ map.on('moveend',()=>{if(housesVisible&&!editMode)loadHouses()});
 // changes waiting to be shared, and automatic sharing when the connection comes back.
 // Note: functions here can be called while the page is still starting, so they use
 // literal storage keys instead of constants declared below.
-const TT_APP_VERSION='2026.10.04-1';   // keep in step with VERSION in sw.js
+const TT_APP_VERSION='2026.10.04-2';   // keep in step with VERSION in sw.js
 // Offline map pictures: USGS The National Map "USGSTopo" (US Government, public domain, no account,
 // and downloading for offline use is allowed). OpenStreetMap's own tiles may NOT be downloaded ahead
 // of time, so they are only used live, while there is a connection.
