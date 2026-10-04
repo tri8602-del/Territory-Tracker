@@ -1479,6 +1479,12 @@ function ttMergeRoads(a,b){
   });
   return out;
 }
+function ttReshareIfNeeded(reg,cloudList){
+  const by={}; (cloudList||[]).forEach(c=>{by[c.id]=c;});
+  const sig=r=>Object.keys(r||{}).sort().map(k=>k+':'+(r[k].status||'')+'@'+(r[k].statusAt||'')).join('|');
+  const co=t=>(t.checkedOut===true?'1':'0')+'@'+(t.checkOutAt||'');
+  if((reg||[]).some(t=>{const c=by[t.id];return c&&(sig(t.roads)!==sig(ttCleanRoads(c.roads))||co(t)!==co(c));}))ttDirty();
+}
 function ttDropRoadsBefore(roads,at){
   if(!at)return roads||{};
   const out={}; Object.keys(roads||{}).forEach(k=>{const r=roads[k];if(r&&r.statusAt&&r.statusAt>at)out[k]=r;});
@@ -1639,6 +1645,7 @@ async function syncLoadCloud(fromJoin=false){
       :ttSyncMerge(cloud,true);
     ttApplySynced(res);
     ttSetSeenRev(Number(snap.data()?.rev||0));
+    ttReshareIfNeeded(res.registry,cloud.list);
     localStorage.setItem('tt_last_cloud_sync',new Date().toISOString());
     syncCloudLoaded=true;
     $('syncLast').textContent='Last loaded: '+new Date().toLocaleString();
@@ -2589,6 +2596,7 @@ async function ttQuietLoad(){
     ttApplySynced(res,true);
     ttSetSeenRev(Number(snap.data()?.rev||0));
     syncCloudLoaded=true;
+    ttReshareIfNeeded(res.registry,cloud.list);
     localStorage.setItem('tt_last_cloud_sync',new Date().toISOString());
     $('syncLast').textContent='Last updated automatically: '+new Date().toLocaleString();
   }catch(e){console.warn('Automatic update will try again later:',e?.message||e);}
