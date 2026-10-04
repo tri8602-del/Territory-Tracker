@@ -2506,7 +2506,7 @@ async function ttShowStoredHouses(){
       feats.push(f); if(feats.length>=4000)break;
     }
   }
-  if(ttOnline()&&!feats.length)return;   // live buildings failed briefly: keep what is drawn
+  if(!feats.length)return;   // nothing stored for this spot: keep the buildings already drawn
   ttRenderHouses({type:'FeatureCollection',features:feats});
 }
 
