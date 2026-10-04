@@ -1,7 +1,7 @@
 /* Territory Tracker service worker: lets the app start with no connection.
    IMPORTANT: change VERSION (and TT_APP_VERSION in index.html) whenever index.html or any file
    below changes, so devices download the new version and show "New version, tap to reload". */
-const VERSION = '2026.10.04-1';
+const VERSION = '2026.10.04-2';
 const SHELL = 'tt-shell-' + VERSION;
 const FILES = [
   './', './index.html', './manifest.json',
