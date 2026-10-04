@@ -165,6 +165,10 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 </style>
 
 <style id="layout-fixes">
+/* Houses with a permanent note: a star on the map (and a purple outline). */
+.pnote-marker{font-size:15px;line-height:18px;text-align:center;filter:drop-shadow(0 0 2px #fff) drop-shadow(0 0 1px #fff)}
+.tmRow{flex-wrap:wrap}.tmRowName{min-width:45%}
+.tmCheckIn{background:#34c759!important;color:#fff!important}
 /* Phone: the button bar grows to fit all its buttons and the legend; the map ends where the bar starts (--tt-bottom is set from the script). */
 @media (max-width:600px){
   .bottom{height:auto!important;overflow:visible!important}
@@ -217,6 +221,7 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 <span><i class="sw" style="background:#34c759"></i>Worked</span>
 <span><i class="sw" style="background:#ffcc00"></i>Not Home</span>
 <span><i class="sw" style="background:#007aff"></i>Return</span>
+<span>⭐ Permanent note</span>
 </div>
 </div></div>
 
@@ -257,8 +262,8 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 
   <div id="syncSetup">
     <label class="small">Shared Territory Code</label>
-    <input id="syncCode" type="text" inputmode="text" autocapitalize="characters" autocomplete="off" maxlength="32" placeholder="e.g. JM-7K4Q-2P9X">
-    <div class="small" style="margin-top:6px">Use the same code on each device that should share these territories. Keep it private to your congregation.</div>
+    <input id="syncCode" type="text" inputmode="text" autocapitalize="characters" autocomplete="off" maxlength="32" placeholder="e.g. 7K4Q-2P9X-JMWD-R8TC">
+    <div class="small" style="margin-top:6px">Use the same code on each device that should share these territories. Keep it private to your congregation. Long codes are safer: tap Generate New Code for a 16-character code (letters, numbers and hyphens, 8 to 32 characters).</div>
     <button class="save" id="syncJoin">Join / Create Shared Space</button>
     <button class="save" id="syncGenerate" style="margin-top:7px;background:#e5e5ea;color:#111">Generate New Code</button>
   </div>
@@ -328,7 +333,10 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 <button data-status="dnc" style="background:#eee">🚫 DNC</button>
 <button data-status="" style="background:#f2f2f7">⚪ Not Worked</button>
 </div>
+<label class="small" for="houseNote" style="display:block;font-weight:700;margin-bottom:3px">Note <span style="font-weight:400">(cleared when the territory is checked in)</span></label>
 <textarea id="houseNote" placeholder="Add a note..."></textarea>
+<label class="small" for="housePNote" style="display:block;font-weight:700;margin:8px 0 3px">⭐ Permanent note <span style="font-weight:400">(kept when the territory is checked in)</span></label>
+<textarea id="housePNote" placeholder="e.g. good discussion, interested in..."></textarea>
 <div style="display:flex;gap:7px;margin-top:7px"><button class="save" id="saveNote" style="flex:1">Save Note</button><button class="save" id="cancelHouse" style="flex:1;background:#e5e5ea;color:#111">Cancel</button></div>
 </section>
 
@@ -388,6 +396,8 @@ function ttCleanRecords(recs,stats){
     if(typeof r.note==='string'&&r.note)o.note=r.note;
     if(typeof r.statusAt==='string')o.statusAt=r.statusAt;
     if(typeof r.noteAt==='string')o.noteAt=r.noteAt;
+    if(typeof r.pnote==='string'&&r.pnote)o.pnote=r.pnote;
+    if(typeof r.pnoteAt==='string')o.pnoteAt=r.pnoteAt;
     if(Object.keys(o).length)out[String(id)]=o;
   });
   return out;
@@ -405,7 +415,33 @@ function ttMergeRecords(a,b){
     const x=(a&&a[id])||{},y=(b&&b[id])||{},r={};
     const s=ttPick(x,y,'status');if(s.status)r.status=s.status;if(s.statusAt)r.statusAt=s.statusAt;
     const n=ttPick(x,y,'note');if(n.note)r.note=n.note;if(n.noteAt)r.noteAt=n.noteAt;
+    const p=ttPick(x,y,'pnote');if(p.pnote)r.pnote=p.pnote;if(p.pnoteAt)r.pnoteAt=p.pnoteAt;
     if(Object.keys(r).length)out[id]=r;
+  });
+  return out;
+}
+// Check In: drop house marks and ordinary notes made before the check-in time (or with no time).
+// Permanent notes always stay. Used when checking in, and on every merge so an older copy
+// on another device cannot bring the old marks back.
+function ttDropBefore(recs,at){
+  if(!at)return recs||{};
+  const out={};
+  Object.keys(recs||{}).forEach(id=>{
+    const r=recs[id],o={};
+    if(r.statusAt&&r.statusAt>at){if(r.status)o.status=r.status;o.statusAt=r.statusAt;}
+    if(r.noteAt&&r.noteAt>at){if(r.note)o.note=r.note;o.noteAt=r.noteAt;}
+    if(r.pnote||r.pnoteAt){if(r.pnote)o.pnote=r.pnote;if(r.pnoteAt)o.pnoteAt=r.pnoteAt;}
+    if(Object.keys(o).length)out[id]=o;
+  });
+  return out;
+}
+// Restoring a backup on purpose: marks from before the last check-in get today's time so the restore sticks.
+function ttRestampBefore(recs,at){
+  if(!at)return recs;
+  const now=ttNow(),out=ttClone(recs||{});
+  Object.values(out).forEach(r=>{
+    if((r.status||r.statusAt)&&!(r.statusAt>at))r.statusAt=now;
+    if((r.note||r.noteAt)&&!(r.noteAt>at))r.noteAt=now;
   });
   return out;
 }
@@ -420,6 +456,7 @@ function exportMapData(){
     records:records,
     startPoint:ttCurrent()?.startPoint||null,
     lastWorked:ttCurrent()?.lastWorked||null,
+    checkInAt:ttCurrent()?.checkInAt||null,
     territoryName:ttCurrent()?.name||'Territory',
     exportedAt:new Date().toISOString()
   };
@@ -440,20 +477,24 @@ function importMapDataFile(file){
       const shapes=ttCleanShapes(data,st);
       if(data.territory.length&&shapes.territory.length<3) throw new Error('No usable boundary');
       const fileRecords=ttCleanRecords(data.records,st);
-      const nFile=Object.keys(fileRecords).length,nHere=Object.keys(records).filter(k=>records[k].status||records[k].note).length;
+      const nFile=Object.keys(fileRecords).length,nHere=Object.keys(records).filter(k=>records[k].status||records[k].note||records[k].pnote).length;
       const plural=n=>n===1?'':'s';
-      if(!confirm(`Import this map data?\n\nThis replaces this territory's boundary and Do Not Work areas, AND its house statuses and notes (${nFile} house${plural(nFile)} in the file, ${nHere} on this device).`+(st.bad?`\n\n${st.bad} unusable item${plural(st.bad)} in the file will be skipped.`:''))) return;
+      if(!confirm(`Import this map data?\n\nThis replaces this territory's boundary and Do Not Work areas, AND its house statuses and notes, including permanent notes (${nFile} house${plural(nFile)} in the file, ${nHere} on this device).`+(st.bad?`\n\n${st.bad} unusable item${plural(st.bad)} in the file will be skipped.`:''))) return;
       let keep=false;
       if(nHere) keep=confirm(`Keep the house statuses and notes already on this device?\n\nOK = keep them. Houses that are only in the file are added; where both have the same house, the newer change wins.\nCancel = replace them with the file's statuses and notes.`);
       territory=shapes.territory;
       dnw=shapes.dnw;
       dnwNames=shapes.dnwNames;
-      records=keep?ttMergeRecords(records,fileRecords):fileRecords;
       const current=ttCurrent();
+      const checkInAt=[current&&current.checkInAt,typeof data.checkInAt==='string'?data.checkInAt:''].filter(Boolean).sort().pop()||'';
+      // Keep: marks in the file from before the last check-in are not brought back.
+      // Replace: the file is a deliberate restore, so its marks are kept (stamped with today's time).
+      records=keep?ttDropBefore(ttMergeRecords(records,fileRecords),checkInAt):ttRestampBefore(fileRecords,checkInAt);
       if(current){
+        if(checkInAt){current.checkInAt=checkInAt;if(!(current.lastWorked>=checkInAt))current.lastWorked=checkInAt;}
         if(data.startPoint&&Number.isFinite(Number(data.startPoint.lat))&&Number.isFinite(Number(data.startPoint.lng))) current.startPoint={lat:Number(data.startPoint.lat),lng:Number(data.startPoint.lng),address:String(data.startPoint.address||'')};
         else delete current.startPoint;
-        if(data.lastWorked) current.lastWorked=String(data.lastWorked);
+        if(data.lastWorked&&String(data.lastWorked)>(current.lastWorked||'')) current.lastWorked=String(data.lastWorked);
         current.geoAt=ttNow();
       }
       localStorage.setItem('tt_geometry_stable',JSON.stringify({territory,dnw}));
@@ -827,7 +868,7 @@ function ttRenderManager(){
     items.forEach(t=>{
       const row=document.createElement('div');row.className='tmRow';
       const name=document.createElement('div');name.className='tmRowName';name.textContent=t.name;
-      const meta=document.createElement('div');meta.className='tmMeta';meta.textContent=(t.id===currentTerritoryId?'CURRENT • ':'')+((t.territory||[]).length)+' boundary points';
+      const meta=document.createElement('div');meta.className='tmMeta';meta.textContent=(t.id===currentTerritoryId?'CURRENT • ':'')+((t.territory||[]).length)+' boundary points • '+(t.lastWorked&&!isNaN(new Date(t.lastWorked))?'Checked in '+new Date(t.lastWorked).toLocaleDateString():'Not checked in yet');
       const open=document.createElement('button');
       open.textContent=t.archived?'↩️ Restore':'Open';
       open.disabled=!t.archived && t.id===currentTerritoryId;
@@ -841,10 +882,47 @@ function ttRenderManager(){
       del.style.color='#fff';
       del.onclick=()=>ttDelete(t.id);
 
-      row.append(name,meta,open,del);list.appendChild(row);
+      const chk=document.createElement('button');
+      chk.textContent='✅ Check In';chk.className='tmCheckIn';chk.style.minWidth='88px';
+      chk.onclick=()=>ttCheckIn(t.id);
+
+      if(t.archived)row.append(name,meta,open,del);else row.append(name,meta,open,chk,del);
+      list.appendChild(row);
     });
   }
   group('ACTIVE TERRITORIES',active); group('ARCHIVED',archived);
+}
+// Export one territory as a backup file (same format as Export Map Data).
+function ttExportTerritory(t){
+  const payload={version:1,territory:t.territory||[],dnw:t.dnw||[],dnwNames:t.dnwNames||[],records:t.records||{},
+    startPoint:t.startPoint||null,lastWorked:t.lastWorked||null,checkInAt:t.checkInAt||null,territoryName:t.name||'Territory',exportedAt:new Date().toISOString()};
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='territory-tracker-backup-'+String(t.name||'territory').replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'')+'-'+new Date().toISOString().slice(0,10)+'.json';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+// Check In: every house goes back to Not Worked and ordinary notes are cleared; permanent notes stay.
+function ttCheckIn(id){
+  if(editMode)closeEditor(false);
+  ttSaveCurrent();
+  const t=territoryRegistry.find(x=>x.id===id); if(!t)return;
+  let marks=0,notes=0,keep=0;
+  Object.values(t.records||{}).forEach(r=>{if(r.status)marks++;if(r.note)notes++;if(r.pnote)keep++;});
+  const p=n=>n===1?'':'s';
+  if(!confirm(`Check in "${t.name}"?\n\n• ${marks} house mark${p(marks)} go back to Not Worked\n• ${notes} note${p(notes)} will be cleared\n• ${keep} permanent note${p(keep)} ⭐ will be kept\n\nThe check-in date is saved. Use Cloud Sync > Save All to share it.`))return;
+  if(confirm('Download a backup of this territory first?\n\nOK = download a backup file, then check in.\nCancel = check in without a backup.'))ttExportTerritory(t);
+  const at=ttNow();
+  t.records=ttDropBefore(t.records,at);
+  t.checkInAt=at; t.lastWorked=at;
+  if(id===currentTerritoryId){
+    records=ttClone(t.records);
+    localStorage.setItem('tt_house_records_stable',JSON.stringify(records));
+    loadHouses();
+  }
+  ttSaveRegistry(); ttRenderManager();
+  banner(`CHECKED IN: ${t.name} (${keep} PERMANENT NOTE${keep===1?'':'S'} KEPT)`); setTimeout(()=>banner(''),3000);
 }
 function ttShowManager(){ttRenderManager();$('territoryManager').classList.add('show');}
 function ttHideManager(){$('territoryManager').classList.remove('show');}
@@ -988,6 +1066,7 @@ function ttImportAsNew(file){
       const t={id:ttNewId(),name,archived:false,territory:shapes.territory,dnw:shapes.dnw,dnwNames:shapes.dnwNames,records:ttCleanRecords(d.records,st),updatedAt:new Date().toISOString(),geoAt:ttNow(),metaAt:ttNow()};
       if(d.startPoint&&Number.isFinite(Number(d.startPoint.lat))&&Number.isFinite(Number(d.startPoint.lng)))t.startPoint={lat:Number(d.startPoint.lat),lng:Number(d.startPoint.lng),address:String(d.startPoint.address||'')};
       if(d.lastWorked)t.lastWorked=String(d.lastWorked);
+      if(typeof d.checkInAt==='string'&&d.checkInAt)t.checkInAt=d.checkInAt;
       while(t.dnwNames.length<t.dnw.length)t.dnwNames.push(`Do Not Work Area ${t.dnwNames.length+1}`);
       t.dnwNames=t.dnwNames.slice(0,t.dnw.length);
       territoryRegistry.push(t); currentTerritoryId=t.id; localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
@@ -1033,6 +1112,8 @@ let syncCloudLoaded=false;
 function normalizeWorkspaceCode(v){
   return String(v||'').trim().toUpperCase().replace(/[^A-Z0-9-]/g,'').slice(0,32);
 }
+// Must match the Firestore rules: 8 to 32 characters, uppercase letters, digits and hyphens.
+const TT_CODE_RE=/^[A-Z0-9-]{8,32}$/;
 function workspaceIdFromCode(code){
   // Use the normalized high-entropy shared code itself as the document ID.
   // Firestore document IDs may safely contain letters, numbers, and hyphens.
@@ -1041,11 +1122,12 @@ function workspaceIdFromCode(code){
 }
 function generateWorkspaceCode(){
   const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes=new Uint32Array(12);
+  // 16 random characters (about 80 bits) in groups of 4: 19 characters with hyphens.
+  const bytes=new Uint32Array(16);
   crypto.getRandomValues(bytes);
   let out='';
   for(let i=0;i<bytes.length;i++) out+=alphabet[bytes[i]%alphabet.length];
-  return out.slice(0,4)+'-'+out.slice(4,8)+'-'+out.slice(8,12);
+  return out.match(/.{4}/g).join('-');
 }
 function syncSetStatus(t,ok=false){
   $('syncStatus').textContent=t;
@@ -1115,6 +1197,8 @@ function sanitizeTerritoryRecord(t,stats){
   // geoAt = last boundary / Do Not Work change, metaAt = last name / archive change (used to merge devices)
   if(typeof t.geoAt==='string'&&t.geoAt)out.geoAt=t.geoAt;
   if(typeof t.metaAt==='string'&&t.metaAt)out.metaAt=t.metaAt;
+  // checkInAt = last "Check In" (house marks and ordinary notes before it are reset)
+  if(typeof t.checkInAt==='string'&&t.checkInAt)out.checkInAt=t.checkInAt;
   if(t.startPoint&&Number.isFinite(Number(t.startPoint.lat))&&Number.isFinite(Number(t.startPoint.lng))){
     out.startPoint={lat:Number(t.startPoint.lat),lng:Number(t.startPoint.lng),address:String(t.startPoint.address||'')};
   }
@@ -1156,12 +1240,14 @@ function firestoreTerritoryRecord(t){
 }
 function workspaceRef(){
   if(!firestore||!syncWorkspaceCode)throw Error('No shared space selected');
+  if(!TT_CODE_RE.test(syncWorkspaceCode))throw Error('The saved shared code is not valid. Disconnect and join again.');
   return firestore.collection('workspaces').doc(workspaceIdFromCode(syncWorkspaceCode));
 }
 async function syncJoin(){
   if(syncBusy)return;
   const code=normalizeWorkspaceCode($('syncCode').value);
-  if(code.length<8){syncSetStatus('Enter a shared code of at least 8 characters.');return}
+  if(!TT_CODE_RE.test(code)||code.replace(/-/g,'').length<8){syncSetStatus('Enter a shared code of 8 to 32 letters, numbers or hyphens (at least 8 letters or numbers).');return}
+  if(code.replace(/-/g,'').length<12&&!confirm('This shared code is short, so it is easier to guess. Anyone with the code can see and change these territories.\n\nTip: tap Generate New Code for a long code.\n\nUse this short code anyway?'))return;
   syncBusy=true;
   try{
     if(!(await ensureFirebase()))return;
@@ -1231,7 +1317,8 @@ function ttSetSeenRev(rev){localStorage.setItem(TT_SEEN_KEY,JSON.stringify({code
 function ttEditTime(t){
   let m=t.geoAt||'';
   if((t.metaAt||'')>m)m=t.metaAt;
-  Object.values(t.records||{}).forEach(r=>{if((r.statusAt||'')>m)m=r.statusAt;if((r.noteAt||'')>m)m=r.noteAt;});
+  if((t.checkInAt||'')>m)m=t.checkInAt;
+  Object.values(t.records||{}).forEach(r=>{if((r.statusAt||'')>m)m=r.statusAt;if((r.noteAt||'')>m)m=r.noteAt;if((r.pnoteAt||'')>m)m=r.pnoteAt;});
   return m;
 }
 // Merge two copies of one territory. Houses: newest status and newest note win, separately.
@@ -1242,10 +1329,14 @@ function ttMergeTerritory(a,b){
   out.territory=ttClone(g.territory||[]);out.dnw=ttClone(g.dnw||[]);out.dnwNames=ttClone(g.dnwNames||[]);
   if(g.geoAt)out.geoAt=g.geoAt;else delete out.geoAt;
   if(g.startPoint)out.startPoint=ttClone(g.startPoint);else delete out.startPoint;
-  if(g.lastWorked)out.lastWorked=g.lastWorked;
+  const lw=[a.lastWorked,b.lastWorked].filter(Boolean).map(String).sort().pop();
+  if(lw)out.lastWorked=lw;else delete out.lastWorked;
   out.name=m.name;out.archived=!!m.archived;
   if(m.metaAt)out.metaAt=m.metaAt;else delete out.metaAt;
-  out.records=ttMergeRecords(a.records,b.records);
+  // The newest check-in wins, and house marks / notes from before it are dropped (permanent notes stay).
+  const ci=[a.checkInAt,b.checkInAt].filter(Boolean).sort().pop();
+  if(ci)out.checkInAt=ci;else delete out.checkInAt;
+  out.records=ttDropBefore(ttMergeRecords(a.records,b.records),ci);
   if((b.updatedAt||'')>(out.updatedAt||''))out.updatedAt=b.updatedAt;
   return out;
 }
@@ -1983,13 +2074,20 @@ async function loadHouses(){
   }
 
   L.geoJSON(gj,{
-    style:f=>buildingStyle(records[String(f.properties.OBJECTID)]?.status),
+    style:f=>{const r=records[String(f.properties.OBJECTID)];const st=buildingStyle(r?.status);if(r?.pnote){st.color='#af52de';st.weight=3;}return st;},
     onEachFeature:(f,l)=>l.on('click',()=>{
       // While editing, a tap on a building is a map tap (place a point), not a house.
       if(editMode||addingDNW)return;
       openHouse(String(f.properties.OBJECTID),f);
     })
   }).addTo(houseLayer);
+  gj.features.forEach(f=>{
+    const id=String(f.properties.OBJECTID);
+    if(!records[id]?.pnote)return;
+    const c=L.geoJSON(f).getBounds().getCenter();
+    L.marker(c,{icon:L.divIcon({className:'pnote-marker',html:'⭐',iconSize:[18,18]}),title:'Permanent note',keyboard:false})
+      .on('click',()=>{if(editMode||addingDNW)return;openHouse(id,f);}).addTo(houseLayer);
+  });
  }catch(e){console.warn('Building layer unavailable',e)}
 }
 
@@ -2014,6 +2112,7 @@ function openHouse(id, feature){
  houseCurrentPoint=null;
  $('houseTitle').textContent='House';
  $('houseNote').value=records[id]?.note||'';
+ $('housePNote').value=records[id]?.pnote||'';
  $('houseSheet').classList.add('show');
 
  const center=L.geoJSON(feature).getBounds().getCenter();
@@ -2044,7 +2143,10 @@ document.querySelectorAll('[data-status]').forEach(b=>b.addEventListener('click'
  loadHouses();
 }));
 $('saveNote').addEventListener('click',()=>{
- if(!houseCurrent)return;const prevRec=records[houseCurrent]||{},newNote=$('houseNote').value;records[houseCurrent]={...prevRec,note:newNote};if(newNote!==(prevRec.note||''))records[houseCurrent].noteAt=ttNow();localStorage.setItem('tt_house_records_stable',JSON.stringify(records));if(typeof ttSaveCurrent==='function')ttSaveCurrent();$('houseSheet').classList.remove('show');
+ if(!houseCurrent)return;const prevRec=records[houseCurrent]||{},newNote=$('houseNote').value,newPNote=$('housePNote').value.trim();records[houseCurrent]={...prevRec,note:newNote};if(newNote!==(prevRec.note||''))records[houseCurrent].noteAt=ttNow();
+ const pChanged=newPNote!==(prevRec.pnote||'');if(pChanged){if(newPNote)records[houseCurrent].pnote=newPNote;else delete records[houseCurrent].pnote;records[houseCurrent].pnoteAt=ttNow();}
+ localStorage.setItem('tt_house_records_stable',JSON.stringify(records));if(typeof ttSaveCurrent==='function')ttSaveCurrent();$('houseSheet').classList.remove('show');
+ if(pChanged)loadHouses();
 });
 $('cancelHouse').addEventListener('click',()=>{
  houseCurrent=null;
