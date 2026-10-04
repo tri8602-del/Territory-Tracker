@@ -5,9 +5,15 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#007aff">
 <title>Territory Tracker</title>
-<!-- manifest.json is not in the repo yet. The link is kept on purpose: it will be added with the planned offline / home-screen (PWA) work. -->
+<!-- Home-screen app (PWA): see manifest.json and sw.js. Leaflet and Firebase are stored in vendor/ so the app starts with no connection. -->
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Territories">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <style>
 *{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Arial;background:#f2f2f7;color:#111}
 .app{height:100vh;display:flex;flex-direction:column}.header{background:#fff;padding:45px 12px 9px;border-bottom:1px solid #ddd;z-index:5}
@@ -164,6 +170,27 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 }
 </style>
 
+<style id="offline-ui">
+/* Online / offline indicator in the header */
+.header{position:relative}
+#netStatus{position:absolute;right:10px;bottom:8px;border:0;border-radius:12px;padding:4px 9px;font-size:11px;font-weight:700;line-height:13px;background:#e8f8ec;color:#1f7a35;white-space:nowrap;text-align:left;max-width:46vw;z-index:6}
+#netStatus.off{background:#eceff1;color:#333}
+#netStatus.warn{background:#fff4c7;color:#7a5a00}
+@media (max-width:600px){#netStatus{right:6px;bottom:auto;top:calc(env(safe-area-inset-top) + 6px);font-size:10px;line-height:12px;padding:3px 7px;max-width:110px;white-space:normal}}
+/* "New version" prompt */
+#updateToast{display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--tt-bottom,130px) + 12px);z-index:46000;background:#111;color:#fff;border:0;border-radius:22px;padding:11px 18px;font-weight:700;font-size:14px;box-shadow:0 4px 16px #0005}
+#updateToast.show{display:block}
+/* Offline map: where no stored map picture exists, a plain background with the boundary and buildings */
+.leaflet-container{background:#eef0ea}
+/* Territories list: offline readiness */
+.tmOffline{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;color:#555;margin-top:2px}
+.tmOffline .tmOffText{flex:1 1 60%;min-width:0}
+.tmOffline button{font-size:12px;padding:6px 8px}
+.tmOffline .warn{color:#a15c00;font-weight:700}
+.tmOffline .ok{color:#1f7a35;font-weight:700}
+#tmStorage{font-size:11px;color:#555;margin:6px 4px 2px;line-height:15px}
+</style>
+
 <style id="layout-fixes">
 /* Houses with a permanent note: a star on the map (and a purple outline). */
 .pnote-marker{font-size:15px;line-height:18px;text-align:center;filter:drop-shadow(0 0 2px #fff) drop-shadow(0 0 1px #fff)}
@@ -193,7 +220,8 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 </head>
 <body>
 <div class="app">
-<header class="header"><h1>Territory Tracker</h1><p id="currentTerritoryName">Republic / Cardale</p></header>
+<header class="header"><h1>Territory Tracker</h1><p id="currentTerritoryName">Republic / Cardale</p><button id="netStatus" type="button" title="Connection and changes waiting to be shared">● Online</button></header>
+<button id="updateToast" type="button">New version available. Tap to reload</button>
 <div id="banner"></div><div id="map"></div>
 <div class="bottom">
 <div class="actions">
@@ -271,7 +299,7 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
   <div id="syncConnected" style="display:none">
     <div id="syncSignedInBadge" class="small" style="margin:8px 0;font-weight:700">✓ Connected</div>
     <div id="syncCodeDisplay" class="small" style="margin:8px 0;text-align:center;font-weight:700"></div>
-    <div class="small" style="margin-top:5px">This device keeps a local copy too. Cloud sync is manual so you stay in control of when changes are shared.</div>
+    <div class="small" style="margin-top:5px">This device keeps a local copy too. Changes made without a connection are kept on this device and shared automatically when it is back online. Save All and Load All still work any time.</div>
   </div>
 
   <div id="syncActions" style="display:none;margin-top:9px">
@@ -340,10 +368,10 @@ textarea{width:100%;height:70px;border:1px solid #ccc;border-radius:10px;padding
 <div style="display:flex;gap:7px;margin-top:7px"><button class="save" id="saveNote" style="flex:1">Save Note</button><button class="save" id="cancelHouse" style="flex:1;background:#e5e5ea;color:#111">Cancel</button></div>
 </section>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore-compat.js"></script>
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="vendor/firebase/firebase-app-compat.js"></script>
+<script src="vendor/firebase/firebase-auth-compat.js"></script>
+<script src="vendor/firebase/firebase-firestore-compat.js"></script>
 <script>
 (function(){
 'use strict';
@@ -501,13 +529,16 @@ function importMapDataFile(file){
       localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
       localStorage.setItem('tt_house_records_stable',JSON.stringify(records));
       if(typeof ttSaveCurrent==='function')ttSaveCurrent();
+      ttDirty();
       location.reload();
     }catch(e){alert('That file does not contain valid Territory Tracker map data.');}
   };
   reader.readAsText(file);
 }
 const map=L.map('map').setView([39.963,-79.878],14);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap contributors'}).addTo(map);
+// Live map. OpenStreetMap's tile policy forbids downloading tiles ahead of time, so offline
+// maps use public-domain USGS tiles instead (see "Get ready for offline" below).
+const ttOsmLayer=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap contributors'}).addTo(map);
 // Keep the map's bottom edge at the top of the button bar (its height depends on the screen).
 function ttFitBottomBar(){
   const b=document.querySelector('.bottom');if(!b)return;
@@ -656,7 +687,7 @@ $('saveTerritoryName').addEventListener('click',()=>{
   if(!name){banner('Enter a territory name first');return}
   const t=ttCurrent&&ttCurrent();
   if(!t){banner('No current territory');return}
-  t.name=name; t.metaAt=ttNow();
+  t.name=name; t.metaAt=ttNow(); ttDirty();
   $('currentTerritoryName').textContent=name;
   ttSaveRegistry();
   banner('TERRITORY RENAMED: '+name);
@@ -861,6 +892,7 @@ function ttShowCurrentTerritory(id=currentTerritoryId){
 
 function ttRenderManager(){
   const list=$('tmList'); list.innerHTML='';
+  const stg=document.createElement('div');stg.id='tmStorage';list.appendChild(stg);ttRenderStorage();
   const active=territoryRegistry.filter(t=>!t.archived), archived=territoryRegistry.filter(t=>t.archived);
   function group(title,items){
     if(!items.length)return;
@@ -873,7 +905,7 @@ function ttRenderManager(){
       open.textContent=t.archived?'↩️ Restore':'Open';
       open.disabled=!t.archived && t.id===currentTerritoryId;
       open.style.minWidth='72px';
-      open.onclick=()=>{ if(t.archived){ t.archived=false; t.metaAt=ttNow(); ttSaveRegistry(); ttRenderManager(); } else ttSwitch(t.id); };
+      open.onclick=()=>{ if(t.archived){ t.archived=false; t.metaAt=ttNow(); ttDirty(); ttSaveRegistry(); ttRenderManager(); } else ttSwitch(t.id); };
 
       const del=document.createElement('button');
       del.textContent='🗑️ Delete';
@@ -885,8 +917,9 @@ function ttRenderManager(){
       const chk=document.createElement('button');
       chk.textContent='✅ Check In';chk.className='tmCheckIn';chk.style.minWidth='88px';
       chk.onclick=()=>ttCheckIn(t.id);
+      const off=ttOfflineRow(t);
 
-      if(t.archived)row.append(name,meta,open,del);else row.append(name,meta,open,chk,del);
+      if(t.archived)row.append(name,meta,open,del);else row.append(name,meta,open,chk,del,off);
       list.appendChild(row);
     });
   }
@@ -915,7 +948,7 @@ function ttCheckIn(id){
   if(confirm('Download a backup of this territory first?\n\nOK = download a backup file, then check in.\nCancel = check in without a backup.'))ttExportTerritory(t);
   const at=ttNow();
   t.records=ttDropBefore(t.records,at);
-  t.checkInAt=at; t.lastWorked=at;
+  t.checkInAt=at; t.lastWorked=at; ttDirty();
   if(id===currentTerritoryId){
     records=ttClone(t.records);
     localStorage.setItem('tt_house_records_stable',JSON.stringify(records));
@@ -961,6 +994,7 @@ async function ttCreateTerritoryFromForm(){
 
   const status=$('tmNewStatus');
   const btn=$('tmLocateNew');
+  if(!ttOnline()){status.textContent='Finding an address needs a connection. Please try again when you have signal.';return;}
   btn.disabled=true; status.textContent='Locating address…';
 
   try{
@@ -979,7 +1013,7 @@ async function ttCreateTerritoryFromForm(){
       startPoint:{lat,lng,address:hits[0].display_name||address},
       updatedAt:new Date().toISOString(),geoAt:ttNow(),metaAt:ttNow()
     };
-    territoryRegistry.push(t);
+    territoryRegistry.push(t); ttDirty();
     currentTerritoryId=t.id;
     localStorage.setItem(TT_CURRENT_KEY,t.id);
     ttSaveRegistry();
@@ -1012,7 +1046,7 @@ function ttNewTerritory(){
 function ttRename(){
   const t=ttCurrent(); if(!t)return;
   const name=(prompt('New territory name:',t.name)||'').trim(); if(!name)return;
-  t.name=name; t.metaAt=ttNow(); ttSaveCurrent(); $('currentTerritoryName').textContent=name; ttRenderManager();
+  t.name=name; t.metaAt=ttNow(); ttDirty(); ttSaveCurrent(); $('currentTerritoryName').textContent=name; ttRenderManager();
 }
 function ttDelete(id){
   const t=territoryRegistry.find(x=>x.id===id); if(!t)return;
@@ -1026,7 +1060,7 @@ function ttDelete(id){
   const wasCurrent=(id===currentTerritoryId);
   territoryRegistry=territoryRegistry.filter(x=>x.id!==id);
   ttSaveRegistry();
-  const tombs=ttLoadTombs(); tombs[id]=ttNow(); ttSaveTombs(tombs);
+  const tombs=ttLoadTombs(); tombs[id]=ttNow(); ttSaveTombs(tombs); ttDirty();
 
   if(wasCurrent){
     allTerritoriesView=false;
@@ -1048,7 +1082,7 @@ function ttArchive(){
   const t=ttCurrent(); if(!t)return;
   if(territoryRegistry.filter(x=>!x.archived).length<=1){alert('Keep at least one active territory.');return}
   if(!confirm('Archive '+t.name+'? You can restore it later.'))return;
-  t.archived=true; t.metaAt=ttNow(); ttSaveCurrent();
+  t.archived=true; t.metaAt=ttNow(); ttDirty(); ttSaveCurrent();
   allTerritoriesView=false;
   clearAllTerritoryViewLayers();
   const next=territoryRegistry.find(x=>!x.archived); currentTerritoryId=next.id; localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
@@ -1069,7 +1103,7 @@ function ttImportAsNew(file){
       if(typeof d.checkInAt==='string'&&d.checkInAt)t.checkInAt=d.checkInAt;
       while(t.dnwNames.length<t.dnw.length)t.dnwNames.push(`Do Not Work Area ${t.dnwNames.length+1}`);
       t.dnwNames=t.dnwNames.slice(0,t.dnw.length);
-      territoryRegistry.push(t); currentTerritoryId=t.id; localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
+      territoryRegistry.push(t); ttDirty(); currentTerritoryId=t.id; localStorage.setItem(TT_CURRENT_KEY,currentTerritoryId);
       ttSaveRegistry(); ttLoadRecord(t); ttRebuildMap(); ttHideManager();
     }catch(e){alert('That file does not contain valid Territory Tracker map data.')}
   }; r.readAsText(file);
@@ -1162,6 +1196,7 @@ function syncShow(){
 }
 function syncHide(){$('syncSheet').classList.remove('show')}
 function syncShowConnected(){
+  setTimeout(ttUpdateNet,0);
   $('syncSetup').style.display='none';
   $('syncConnected').style.display='block';
   $('syncActions').style.display='block';
@@ -1170,6 +1205,7 @@ function syncShowConnected(){
   $('syncCodeDisplay').textContent='Shared code: '+syncWorkspaceCode;
 }
 function syncShowSetup(){
+  setTimeout(ttUpdateNet,0);
   $('syncSetup').style.display='block';
   $('syncConnected').style.display='none';
   $('syncActions').style.display='none';
@@ -1374,7 +1410,10 @@ function ttSyncMerge(cloud,preferCloud){
   if(!out.some(t=>!t.archived)&&removed.length){removed.forEach(t=>{out.push(t);delete tombs[t.id]});report.removed=[];}
   return {registry:out,tombs,report};
 }
-function ttApplySynced(res){
+// remerge: the save/load took a few seconds; marks or notes made on this device meanwhile are newer,
+// so merge them back in instead of losing them (they stay "waiting" and go out with the next share).
+function ttApplySynced(res,quiet=false,remerge=false){
+  if(remerge){ttSaveCurrent();res=Object.assign({},res,ttSyncMerge({list:res.registry,tombs:res.tombs},false),{report:res.report});}
   territoryRegistry=res.registry;
   ttSaveTombs(res.tombs);
   if(!territoryRegistry.some(t=>t.id===currentTerritoryId&&!t.archived))currentTerritoryId=(territoryRegistry.find(t=>!t.archived)||territoryRegistry[0]).id;
@@ -1383,6 +1422,7 @@ function ttApplySynced(res){
   allTerritoriesView=false;clearAllTerritoryViewLayers();
   const current=ttCurrent();
   ttLoadRecord(current); ttRebuildMap();
+  if(quiet)return;   // automatic sync: keep the map where it is
   setTimeout(()=>ttCenterOnTerritory(current),60);
   setTimeout(()=>ttCenterOnTerritory(current),260);
 }
@@ -1393,9 +1433,11 @@ function ttSyncSummary(r){
   if(r.kept.length)p.push(`Kept because it was changed after another device deleted it: ${r.kept.join(', ')}.`);
   return p.length?' '+p.join(' '):'';
 }
-async function syncSaveCloud(){
+// auto=true: the automatic share when the connection comes back (no questions, no map jumps).
+async function syncSaveCloud(auto=false){
   if(syncBusy)return;
-  if(!syncCloudLoaded){syncSetStatus('Load the shared territories before saving changes.');return}
+  if(!auto&&!ttOnline()){syncSetStatus('No connection. Your changes are saved on this device and will be shared automatically when you are back online.');return}
+  if(!auto&&!syncCloudLoaded){syncSetStatus('Load the shared territories before saving changes.');return}
   if(!(await ensureFirebase()))return;
   if(!syncWorkspaceCode){syncSetStatus('Join a shared space first.');return}
   syncBusy=true; syncSetStatus('Saving all territories to Firebase…');
@@ -1404,7 +1446,8 @@ async function syncSaveCloud(){
     const existing=await ref.get();
     if(!existing.exists)throw Error('Shared space no longer exists.');
     const cloudRev=Number(existing.data()?.rev||0);
-    if(cloudRev>ttSeenRev()&&!confirm('The shared territories were changed on another device since this device last loaded them.\n\nSave anyway? Nothing is simply overwritten: for each house the newest status and the newest note are kept, and the newest boundary edit wins.\n\nCancel = don\'t save now (tap Load All first to see the other changes).')){
+    const startedAt=ttNow();
+    if(!auto&&cloudRev>ttSeenRev()&&!confirm('The shared territories were changed on another device since this device last loaded them.\n\nSave anyway? Nothing is simply overwritten: for each house the newest status and the newest note are kept, and the newest boundary edit wins.\n\nCancel = don\'t save now (tap Load All first to see the other changes).')){
       syncSetStatus('Not saved. Tap Load All to get the other device\'s changes first.');
       return;
     }
@@ -1412,17 +1455,26 @@ async function syncSaveCloud(){
     const res=ttSyncMerge(await ttReadCloud(ref),false);
     await writeTerritoriesInBatches(ref,res.registry,res.tombs);
     await ref.set({schemaVersion:3,rev:firebase.firestore.FieldValue.increment(1),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:firebaseUser.uid},{merge:true});
-    ttSetSeenRev(Number((await ref.get()).data()?.rev||0));
-    ttApplySynced(res);
+    const newRev=Number((await ref.get()).data()?.rev||0);
+    ttClearPending(startedAt);
+    syncCloudLoaded=true;
+    // Someone started editing a boundary while this was being saved: keep their edit untouched and
+    // pick up the shared changes on the next automatic check.
+    if(editMode){$('syncLast').textContent='Last saved: '+new Date().toLocaleString();syncSetStatus('Changes shared.',true);return;}
+    ttSetSeenRev(newRev);
+    ttApplySynced(res,auto,true);
+    localStorage.setItem('tt_last_cloud_sync',new Date().toISOString());
     $('syncLast').textContent='Last saved: '+new Date().toLocaleString();
-    syncSetStatus('All territories saved to Firebase.'+ttSyncSummary(res.report),true);
+    syncSetStatus((auto?'Changes shared automatically.':'All territories saved to Firebase.')+ttSyncSummary(res.report),true);
+    if(auto&&$('syncSheet').classList.contains('show'))syncShowConnected();
   }catch(e){
-    console.error('Firebase save failed:',e);
-    syncSetStatus('Cloud save failed: '+(e?.message||'unknown error'));
-  }finally{syncBusy=false}
+    if(auto){console.warn('Automatic sync will try again later:',e?.message||e);ttNetCheck();}
+    else{console.error('Firebase save failed:',e);syncSetStatus('Cloud save failed: '+(e?.message||'unknown error'));}
+  }finally{syncBusy=false;ttUpdateNet();}
 }
 async function syncLoadCloud(fromJoin=false){
   if(syncBusy&&!fromJoin)return;
+  if(!ttOnline()){syncSetStatus('No connection. Load All needs a connection; everything on this device keeps working.');return}
   if(!(await ensureFirebase()))return;
   if(!syncWorkspaceCode){syncSetStatus('Join a shared space first.');return}
   if(!fromJoin)syncBusy=true;
@@ -1467,6 +1519,7 @@ function syncDisconnect(){
   syncCloudLoaded=false;
   localStorage.removeItem('tt_firebase_workspace_code');
   localStorage.removeItem(TT_SEEN_KEY);
+  localStorage.removeItem('tt_pending_changes_v1'); ttUpdateNet();
   syncShowSetup();
   syncSetStatus('Disconnected. Local territory data is unchanged.');
 }
@@ -1474,13 +1527,14 @@ $('cloudSync').addEventListener('click',syncShow);
 $('syncClose').addEventListener('click',syncHide);
 $('syncJoin').addEventListener('click',syncJoin);
 $('syncGenerate').addEventListener('click',()=>{$('syncCode').value=generateWorkspaceCode();$('syncCode').focus()});
-$('syncSave').addEventListener('click',syncSaveCloud);
+$('syncSave').addEventListener('click',()=>syncSaveCloud(false));
 $('syncLoad').addEventListener('click',()=>syncLoadCloud(false));
 $('syncDisconnect').addEventListener('click',syncDisconnect);
 
 // Initialize Firebase in the background. If Anonymous Auth is not enabled yet,
 // the rest of the app continues to work entirely from localStorage.
-ensureFirebase().catch(()=>{});
+if(navigator.onLine)ensureFirebase().catch(()=>{});
+else syncSetStatus('No connection. Your work is saved on this device and will be shared when you are back online.');
 
 $('exportData').addEventListener('click',exportMapData);
 $('importData').addEventListener('change',e=>{
@@ -1654,6 +1708,7 @@ function closeEditor(save){
     localStorage.setItem('tt_geometry_stable',JSON.stringify({territory,dnw}));
     localStorage.setItem('tt_dnw_names_v1',JSON.stringify(dnwNames));
   }else if(save){
+    ttDirty();
     const t=ttCurrent&&ttCurrent();
     if(t&&(!original||JSON.stringify([original.territory,original.dnw])!==JSON.stringify([territory,dnw])))t.geoAt=ttNow();
     localStorage.setItem('tt_geometry_stable',JSON.stringify({territory,dnw}));
@@ -1745,7 +1800,7 @@ $('saveDNWName').addEventListener('click',()=>{
     const names=Array.isArray(t.dnwNames)?t.dnwNames.slice():[];
     names[activeDNWIndex]=name;
     for(let i=0;i<names.length;i++)if(typeof names[i]!=='string')names[i]=`Do Not Work Area ${i+1}`;
-    t.dnwNames=names; t.geoAt=ttNow(); ttSaveRegistry();
+    t.dnwNames=names; t.geoAt=ttNow(); ttSaveRegistry(); ttDirty();
   }
   refreshDNWLabel(activeDNWIndex);
   refreshDNWChooser();
@@ -1920,8 +1975,8 @@ $('followRoad').addEventListener('click',()=>{
  $('roadAdd').disabled=true; $('roadAdd').style.opacity='.5';
  $('followRoad').classList.add('active');
  makeHandles();
- $('roadName').textContent='STEP 1: Tap the first blue point.';
- banner('FOLLOW ROAD: TAP POINT 1');
+ $('roadName').textContent=ttOnline()?'STEP 1: Tap the first blue point.':'Follow Road needs a connection. Without one you can still drag, add and delete points by hand.';
+ banner(ttOnline()?'FOLLOW ROAD: TAP POINT 1':'FOLLOW ROAD NEEDS A CONNECTION');
  setTimeout(()=>ttRevealPoints(currentArray()),60);
 });
 
@@ -1943,6 +1998,12 @@ async function roadLabel(lat,lng){
 }
 
 async function prepareRoadPreview(){
+ if(!ttOnline()){
+  $('roadName').textContent='Follow Road needs a connection. Without one you can still drag, add and delete points by hand.';
+  banner('FOLLOW ROAD NEEDS A CONNECTION');
+  selectedPointIndices=[];
+  return;
+ }
  const arr=currentArray(),aIndex=selectedPointIndices[0],bIndex=selectedPointIndices[1];
  const adjacent=(Math.abs(aIndex-bIndex)===1)||(Math.abs(aIndex-bIndex)===arr.length-1);
  if(!adjacent){
@@ -2057,6 +2118,7 @@ function buildingStyle(status){
 }
 async function loadHouses(){
  if(!housesVisible){houseLayer.clearLayers();return}
+ if(!ttOnline()){ttShowStoredHouses();return}
  const b=map.getBounds(),g=encodeURIComponent(JSON.stringify({
    xmin:b.getWest()-.003,ymin:b.getSouth()-.003,
    xmax:b.getEast()+.003,ymax:b.getNorth()+.003,
@@ -2066,6 +2128,12 @@ async function loadHouses(){
  try{
   const r=await fetch(url);if(!r.ok)throw Error();
   const gj=await r.json();
+  ttRenderHouses(gj);
+ }catch(e){console.warn('Building layer unavailable, using the stored copy if there is one',e);ttShowStoredHouses();}
+}
+// Draw buildings (live or stored) with their status colours and permanent-note stars.
+function ttRenderHouses(gj){
+ {
   houseLayer.clearLayers();
 
   // "Remaining" means buildings that have NOT been marked Worked.
@@ -2088,7 +2156,7 @@ async function loadHouses(){
     L.marker(c,{icon:L.divIcon({className:'pnote-marker',html:'⭐',iconSize:[18,18]}),title:'Permanent note',keyboard:false})
       .on('click',()=>{if(editMode||addingDNW)return;openHouse(id,f);}).addTo(houseLayer);
   });
- }catch(e){console.warn('Building layer unavailable',e)}
+ }
 }
 
 let houseCurrentPoint=null;
@@ -2096,6 +2164,7 @@ let houseCurrentPoint=null;
 
 
 async function reverseHouseAddress(lat,lng){
+  if(!ttOnline())return '';
   try{
     const u=`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`;
     const r=await fetch(u,{headers:{'Accept':'application/json'}});
@@ -2122,7 +2191,7 @@ function openHouse(id, feature){
    if(addr){
      $('houseTitle').textContent='🏠 '+addr;
    }else{
-     $('houseTitle').textContent='🏠 House';
+     $('houseTitle').textContent=ttOnline()?'🏠 House':'🏠 House (the address needs a connection)';
    }
  });
 }
@@ -2134,7 +2203,7 @@ document.querySelectorAll('[data-status]').forEach(b=>b.addEventListener('click'
  if(status) rec.status=status;
  else delete rec.status;
  rec.statusAt=ttNow();
- records[houseCurrent]=rec;
+ records[houseCurrent]=rec; ttDirty();
  localStorage.setItem('tt_house_records_stable',JSON.stringify(records));
  if(typeof ttSaveCurrent==='function')ttSaveCurrent();
  $('houseSheet').classList.remove('show');
@@ -2146,6 +2215,7 @@ $('saveNote').addEventListener('click',()=>{
  if(!houseCurrent)return;const prevRec=records[houseCurrent]||{},newNote=$('houseNote').value,newPNote=$('housePNote').value.trim();records[houseCurrent]={...prevRec,note:newNote};if(newNote!==(prevRec.note||''))records[houseCurrent].noteAt=ttNow();
  const pChanged=newPNote!==(prevRec.pnote||'');if(pChanged){if(newPNote)records[houseCurrent].pnote=newPNote;else delete records[houseCurrent].pnote;records[houseCurrent].pnoteAt=ttNow();}
  localStorage.setItem('tt_house_records_stable',JSON.stringify(records));if(typeof ttSaveCurrent==='function')ttSaveCurrent();$('houseSheet').classList.remove('show');
+ if(newNote!==(prevRec.note||'')||pChanged)ttDirty();
  if(pChanged)loadHouses();
 });
 $('cancelHouse').addEventListener('click',()=>{
@@ -2274,6 +2344,465 @@ $('resetDNW').addEventListener('click',()=>{
 });
 
 map.on('moveend',()=>{if(housesVisible&&!editMode)loadHouses()});
+
+// ===================== Working without a connection =====================
+// Home-screen app (sw.js keeps the app itself on the device), offline maps per territory,
+// changes waiting to be shared, and automatic sharing when the connection comes back.
+// Note: functions here can be called while the page is still starting, so they use
+// literal storage keys instead of constants declared below.
+const TT_APP_VERSION='2026.10.04-1';   // keep in step with VERSION in sw.js
+// Offline map pictures: USGS The National Map "USGSTopo" (US Government, public domain, no account,
+// and downloading for offline use is allowed). OpenStreetMap's own tiles may NOT be downloaded ahead
+// of time, so they are only used live, while there is a connection.
+const TT_USGS_URL='https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}';
+const TT_OFF_MINZ=12, TT_OFF_MAXZ=16;  // USGSTopo has street-level detail to zoom 16; closer views enlarge it
+const TT_OFF_MAX_TILES=2500;           // about 60 MB for one territory at most
+const TT_STALE_DAYS=7;
+
+// ---- connection state ----
+// ttOnline.down: the device says it is online but nothing gets through (one bar of signal).
+function ttOnline(){return navigator.onLine!==false&&!ttOnline.down;}
+function ttWithTimeout(p,ms){return Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(Error('timed out')),ms))]);}
+async function ttNetCheck(){
+  if(ttNetCheck.busy)return; ttNetCheck.busy=true;
+  try{const r=await ttWithTimeout(fetch('manifest.json?ttprobe='+Date.now(),{cache:'no-store'}),8000);ttOnline.down=!r.ok;}
+  catch(e){ttOnline.down=true;}
+  finally{ttNetCheck.busy=false;}
+  ttNetChanged();
+  if(ttOnline.down&&navigator.onLine){clearTimeout(ttNetCheck.t);ttNetCheck.t=setTimeout(ttNetCheck,30000);}
+}
+function ttNetChanged(){
+  const on=ttOnline(), was=ttNetChanged.last;
+  ttNetChanged.last=on;
+  ttUpdateNet();
+  ttUseOfflineMap(!on);
+  if(on===was)return;
+  if(on){
+    if(!firebaseReady)ensureFirebase().catch(()=>{});
+    ttScheduleAutoSync(1500);
+  }
+  if(housesVisible&&!editMode)loadHouses();
+  if($('territoryManager').classList.contains('show'))ttRenderManager();
+}
+window.addEventListener('online',()=>{ttOnline.down=false;ttNetChanged();});
+window.addEventListener('offline',ttNetChanged);
+// Several map pictures failing at once usually means the signal has dropped.
+ttOsmLayer.on('tileerror',()=>{
+  const now=Date.now(); ttOsmLayer._ttErr=(ttOsmLayer._ttErr||[]).filter(t=>now-t<6000); ttOsmLayer._ttErr.push(now);
+  if(ttOsmLayer._ttErr.length>=4&&navigator.onLine){ttOsmLayer._ttErr=[];ttNetCheck();}
+});
+
+// ---- the header indicator: Online / Offline and changes waiting to be shared ----
+function ttPendingList(){const v=ttSafeParse('tt_pending_changes_v1',[]);return Array.isArray(v)?v.filter(x=>typeof x==='string'):[];}
+function ttDirty(){
+  if(!syncWorkspaceCode)return;   // not sharing: nothing to send
+  const l=ttPendingList(); l.push(ttNow());
+  localStorage.setItem('tt_pending_changes_v1',JSON.stringify(l.slice(-5000)));
+  ttUpdateNet(); ttScheduleAutoSync(8000);
+}
+function ttClearPending(before){
+  localStorage.setItem('tt_pending_changes_v1',JSON.stringify(ttPendingList().filter(t=>t>before)));
+  ttUpdateNet();
+}
+function ttUpdateNet(){
+  const el=$('netStatus'); if(!el)return;
+  const on=ttOnline(), p=ttPendingList(), n=p.length;
+  let text=on?'● Online':'● Offline', cls=on?'':'off';
+  if(syncWorkspaceCode){
+    if(n){
+      text+=` · ${n} change${n===1?'':'s'} to share`;
+      if(Date.now()-new Date(p[0]).getTime()>2*864e5){cls='warn';text+=' (since '+new Date(p[0]).toLocaleDateString([], {month:'short',day:'numeric'})+')';}
+    }else if(on)text+=' · all shared';
+  }
+  el.textContent=text; el.className=cls;
+  el.title=on?'Connected':'No connection: your work is kept on this device';
+}
+$('netStatus').addEventListener('click',()=>{
+  if(!ttOnline())banner(ttPendingList().length&&syncWorkspaceCode?'OFFLINE: YOUR CHANGES ARE SAVED ON THIS DEVICE AND WILL BE SHARED WHEN YOU ARE BACK ONLINE':'OFFLINE: YOUR WORK IS SAVED ON THIS DEVICE');
+  if(typeof syncShow==='function')syncShow();
+});
+
+// ---- automatic sharing ----
+function ttScheduleAutoSync(ms){clearTimeout(ttScheduleAutoSync.t);ttScheduleAutoSync.t=setTimeout(()=>ttAutoSync(),ms);}
+function ttAutoSyncAllowed(){
+  // Only for a device that has already loaded or saved this shared space (so a device that just
+  // joined and chose not to load is not changed behind its back), and never in the middle of an edit.
+  return !!syncWorkspaceCode&&ttOnline()&&!syncBusy&&!editMode&&(syncCloudLoaded||ttSeenRev()>0);
+}
+async function ttAutoSync(){
+  if(!ttAutoSyncAllowed())return;
+  try{
+    if(ttPendingList().length){await syncSaveCloud(true);return;}
+    // Nothing waiting on this device: just pick up other people's changes, if there are any.
+    if(!(await ensureFirebase()))return;
+    const snap=await ttWithTimeout(workspaceRef().get(),20000);
+    if(snap.exists&&Number(snap.data()?.rev||0)>ttSeenRev())await ttQuietLoad();
+  }catch(e){console.warn('Automatic sync will try again later:',e?.message||e);}
+}
+async function ttQuietLoad(){
+  if(syncBusy||editMode)return;
+  syncBusy=true;
+  try{
+    const ref=workspaceRef();
+    const snap=await ttWithTimeout(ref.get(),20000);
+    const cloud=await ttWithTimeout(ttReadCloud(ref),30000);
+    if(cloud.empty||(!cloud.list.length&&!Object.keys(cloud.tombs).length))return;
+    if(editMode)return;   // started editing meanwhile: try again on the next check
+    ttSaveCurrent();
+    const res=ttSyncMerge(cloud,true);
+    ttApplySynced(res,true);
+    ttSetSeenRev(Number(snap.data()?.rev||0));
+    syncCloudLoaded=true;
+    localStorage.setItem('tt_last_cloud_sync',new Date().toISOString());
+    $('syncLast').textContent='Last updated automatically: '+new Date().toLocaleString();
+  }catch(e){console.warn('Automatic update will try again later:',e?.message||e);}
+  finally{syncBusy=false;ttUpdateNet();}
+}
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState!=='visible')return;
+  ttCheckReminders();
+  if(ttOnline())ttScheduleAutoSync(1500);
+  if(ttSwReg&&ttOnline())ttSwReg.update().catch(()=>{});
+});
+setInterval(()=>{if(document.visibilityState==='visible')ttAutoSync();},Number(localStorage.getItem('tt_sync_poll_ms'))||60000);
+
+// ---- stored offline data (IndexedDB "tt-offline": map pictures + one pack per territory) ----
+function ttIdb(){
+  if(ttIdb.p)return ttIdb.p;
+  ttIdb.p=new Promise((res,rej)=>{
+    if(!window.indexedDB)return rej(Error('This browser cannot store offline maps'));
+    const q=indexedDB.open('tt-offline',1);
+    q.onupgradeneeded=()=>{const db=q.result;['tiles','packs'].forEach(n=>{if(!db.objectStoreNames.contains(n))db.createObjectStore(n);});};
+    q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); q.onblocked=()=>rej(Error('Offline storage is busy'));
+  });
+  ttIdb.p.catch(()=>{ttIdb.p=null;});
+  return ttIdb.p;
+}
+function ttIdbDo(store,mode,fn){
+  return ttIdb().then(db=>new Promise((res,rej)=>{
+    const tx=db.transaction(store,mode), r=fn(tx.objectStore(store));
+    let out; if(r)r.onsuccess=()=>{out=r.result;};
+    tx.oncomplete=()=>res(out); tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error||Error('Storage full?'));
+  }));
+}
+function ttPackSummaries(){const v=ttSafeParse('tt_offline_packs_v1',{});return v&&typeof v==='object'&&!Array.isArray(v)?v:{};}
+function ttSavePackSummaries(v){localStorage.setItem('tt_offline_packs_v1',JSON.stringify(v));}
+function ttPackFeatures(id){
+  ttPackFeatures.c=ttPackFeatures.c||{};
+  if(!ttPackFeatures.c[id])ttPackFeatures.c[id]=ttIdbDo('packs','readonly',st=>st.get(id)).then(p=>p&&Array.isArray(p.buildings)?p.buildings:[]).catch(()=>[]);
+  return ttPackFeatures.c[id];
+}
+// Building outlines from the offline packs, for the part of the map on screen.
+async function ttShowStoredHouses(){
+  await null;
+  if(!housesVisible){houseLayer.clearLayers();return}
+  const b=map.getBounds().pad(0.15), W=b.getWest(),E=b.getEast(),S=b.getSouth(),N=b.getNorth();
+  const seen=new Set(), feats=[];
+  for(const id of Object.keys(ttPackSummaries())){
+    for(const f of await ttPackFeatures(id)){
+      const bb=f.bbox, oid=f.properties?.OBJECTID;
+      if(bb&&(bb[2]<W||bb[0]>E||bb[3]<S||bb[1]>N))continue;
+      if(oid!=null){if(seen.has(oid))continue;seen.add(oid);}
+      feats.push(f); if(feats.length>=4000)break;
+    }
+  }
+  if(ttOnline()&&!feats.length)return;   // live buildings failed briefly: keep what is drawn
+  ttRenderHouses({type:'FeatureCollection',features:feats});
+}
+
+// ---- offline map layer: stored pictures first, plain background where there are none ----
+const TTStoredTiles=L.TileLayer.extend({
+  createTile(coords,done){
+    const img=document.createElement('img'); img.alt=''; img.setAttribute('role','presentation');
+    const z=Math.min(coords.z,TT_OFF_MAXZ);
+    const key=`usgs/${z}/${coords.x}/${coords.y}`;
+    const blank=()=>{img.src='data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';};
+    img.onload=()=>done(null,img); img.onerror=()=>{if(img.dataset.live){delete img.dataset.live;blank();}else done(null,img);};
+    ttIdbDo('tiles','readonly',st=>st.get(key)).then(v=>{
+      if(v&&v.b){img.src=URL.createObjectURL(new Blob([v.b],{type:v.t||'image/jpeg'}));img.addEventListener('load',()=>URL.revokeObjectURL(img.src),{once:true});}
+      else if(ttOnline()){img.dataset.live='1';img.crossOrigin='anonymous';img.src=this.getTileUrl(coords);}
+      else blank();
+    }).catch(blank);
+    return img;
+  }
+});
+const ttOfflineLayer=new TTStoredTiles(TT_USGS_URL,{maxNativeZoom:TT_OFF_MAXZ,maxZoom:20,attribution:'Offline map: U.S. Geological Survey, The National Map'});
+function ttUseOfflineMap(on){
+  if(on){if(map.hasLayer(ttOsmLayer))map.removeLayer(ttOsmLayer);if(!map.hasLayer(ttOfflineLayer))ttOfflineLayer.addTo(map);}
+  else{if(map.hasLayer(ttOfflineLayer))map.removeLayer(ttOfflineLayer);if(!map.hasLayer(ttOsmLayer))ttOsmLayer.addTo(map);}
+}
+
+// ---- which map pictures cover a territory ----
+function ttTileXY(lat,lng,z){const n=2**z,r=lat*Math.PI/180;return [Math.floor((lng+180)/360*n),Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n)];}
+function ttTileBox(x,y,z){const n=2**z,lng=v=>v/n*360-180,lat=v=>{const m=Math.PI-2*Math.PI*v/n;return 180/Math.PI*Math.atan(Math.sinh(m));};return {n:lat(y),s:lat(y+1),w:lng(x),e:lng(x+1)};}
+function ttInPoly(poly,lat,lng){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const [ya,xa]=poly[i],[yb,xb]=poly[j];
+    if((ya>lat)!==(yb>lat)&&lng<(xb-xa)*(lat-ya)/(yb-ya)+xa)inside=!inside;
+  }
+  return inside;
+}
+function ttTilesFor(poly){
+  const lats=poly.map(p=>p[0]),lngs=poly.map(p=>p[1]);
+  const S=Math.min(...lats),N=Math.max(...lats),W=Math.min(...lngs),E=Math.max(...lngs);
+  const byZoom=[];
+  for(let z=TT_OFF_MINZ;z<=TT_OFF_MAXZ;z++){
+    const [x0,y0]=ttTileXY(N,W,z),[x1,y1]=ttTileXY(S,E,z), hit=new Set();
+    for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++){
+      const b=ttTileBox(x,y,z);
+      if(ttInPoly(poly,(b.n+b.s)/2,(b.w+b.e)/2)||[[b.n,b.w],[b.n,b.e],[b.s,b.w],[b.s,b.e]].some(c=>ttInPoly(poly,c[0],c[1]))||poly.some(p=>p[0]<=b.n&&p[0]>=b.s&&p[1]>=b.w&&p[1]<=b.e))hit.add(x+'/'+y);
+    }
+    // plus one ring around the edge, so the boundary is never at the edge of the stored map
+    const ring=new Set(hit);
+    hit.forEach(k=>{const [x,y]=k.split('/').map(Number);for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)ring.add((x+dx)+'/'+(y+dy));});
+    byZoom.push([...ring].map(k=>`usgs/${z}/${k}`));
+  }
+  // A very large territory: leave out the most detailed level(s) rather than fill the phone.
+  let maxZ=TT_OFF_MAXZ;
+  while(byZoom.flat().length>TT_OFF_MAX_TILES&&byZoom.length>1){byZoom.pop();maxZ--;}
+  return {keys:byZoom.flat(),maxZ};
+}
+// Building outlines (same source as the live map), in small squares so no request is cut short.
+async function ttFetchBuildings(S,W,N,E,depth,out){
+  const g=encodeURIComponent(JSON.stringify({xmin:W,ymin:S,xmax:E,ymax:N,spatialReference:{wkid:4326}}));
+  const url='https://services.arcgis.com/P3ePLMYs2RVChkJx/ArcGIS/rest/services/MSBFP2/FeatureServer/0/query'
+    +`?f=geojson&where=1%3D1&outFields=OBJECTID&returnGeometry=true&outSR=4326&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&resultRecordCount=2000&geometry=${g}`;
+  const r=await ttWithTimeout(fetch(url),45000); if(!r.ok)throw Error('the building outlines could not be downloaded');
+  const gj=await r.json(); const feats=Array.isArray(gj.features)?gj.features:[];
+  if((gj.exceededTransferLimit||gj.properties?.exceededTransferLimit||feats.length>=2000)&&depth<6){
+    const mLat=(S+N)/2,mLng=(W+E)/2;
+    for(const b of [[S,W,mLat,mLng],[S,mLng,mLat,E],[mLat,W,N,mLng],[mLat,mLng,N,E]])await ttFetchBuildings(...b,depth+1,out);
+    return;
+  }
+  feats.forEach(f=>{
+    const pts=JSON.stringify(f.geometry?.coordinates||[]).match(/-?\d+(\.\d+)?(e-?\d+)?/g)||[];
+    let w=180,s=90,e=-180,n=-90;
+    for(let i=0;i+1<pts.length;i+=2){const x=+pts[i],y=+pts[i+1];if(x<w)w=x;if(x>e)e=x;if(y<s)s=y;if(y>n)n=y;}
+    const oid=f.properties?.OBJECTID??f.id;
+    const key=oid!=null?String(oid):pts.slice(0,4).join(',');
+    if(!out.has(key))out.set(key,{type:'Feature',properties:{OBJECTID:oid},geometry:f.geometry,bbox:[w,s,e,n]});
+  });
+}
+
+// ---- "Get ready for offline" ----
+const ttPrepState={};
+function ttRequestPersist(){
+  try{
+    if(navigator.storage&&navigator.storage.persist)return navigator.storage.persist().then(ok=>{localStorage.setItem('tt_storage_persisted',ok?'1':'0');return ok;}).catch(()=>false);
+  }catch(e){}
+  return Promise.resolve(false);
+}
+async function ttPrepareOffline(id){
+  const t=territoryRegistry.find(x=>x.id===id); if(!t)return;
+  if(!ttOnline()){alert('Getting ready for offline needs a connection. Do this at home on Wi-Fi before you go out.');return;}
+  if(ttPrepareOffline.busy){alert('Another territory is being made ready. Please wait for it to finish.');return;}
+  if(id===currentTerritoryId)ttSaveCurrent();
+  const poly=(Array.isArray(t.territory)?t.territory:[]).filter(p=>Array.isArray(p)&&isFinite(p[0])&&isFinite(p[1]));
+  if(poly.length<3){alert('This territory has no boundary yet. Draw it first (Edit Territory): the offline copy covers the area inside the boundary.');return;}
+  const plan=ttTilesFor(poly);
+  const mb=Math.max(1,Math.round(plan.keys.length*25/1024));
+  if(!confirm(`Get "${t.name||'this territory'}" ready for offline?\n\nThis downloads about ${plan.keys.length} map pictures (about ${mb} MB) and the building outlines, and keeps them on this device.\n\nUse Wi-Fi if you can. It can take a few minutes; keep the app open.`))return;
+  ttPrepareOffline.busy=id;
+  const st=ttPrepState[id]={text:'Starting…'};
+  const paint=()=>{const el=document.querySelector(`.tmOffline[data-id="${id}"] .tmOffText`);if(el)el.textContent='⏳ '+st.text;};
+  ttRenderManager();
+  try{
+    const persisted=ttRequestPersist();
+    // 1. building outlines
+    st.text='Downloading building outlines…'; paint();
+    const lats=poly.map(p=>p[0]),lngs=poly.map(p=>p[1]), m=0.002;
+    const S=Math.min(...lats)-m,N=Math.max(...lats)+m,W=Math.min(...lngs)-m,E=Math.max(...lngs)+m, step=0.02;
+    const found=new Map();
+    for(let y=S;y<N;y+=step)for(let x=W;x<E;x+=step){
+      await ttFetchBuildings(y,x,Math.min(N,y+step),Math.min(E,x+step),0,found);
+      st.text=`Downloading building outlines… ${found.size}`; paint();
+    }
+    const buildings=[...found.values()];
+    // 2. map pictures (4 at a time; ones already stored are reused)
+    const have=new Set(await ttIdbDo('tiles','readonly',s=>s.getAllKeys()).catch(()=>[]));
+    let done=0, missing=0, bytes=0, next=0;
+    const sizes={};
+    const work=async()=>{
+      while(next<plan.keys.length){
+        const key=plan.keys[next++];
+        try{
+          if(have.has(key)){
+            const v=await ttIdbDo('tiles','readonly',s=>s.get(key));
+            sizes[key]=v&&v.b?v.b.byteLength:0;
+          }else{
+            const [,z,x,y]=key.split('/');
+            const r=await ttWithTimeout(fetch(TT_USGS_URL.replace('{z}',z).replace('{y}',y).replace('{x}',x)),30000);
+            if(!r.ok){missing++;sizes[key]=0;}
+            else{
+              const b=await r.arrayBuffer();
+              await ttIdbDo('tiles','readwrite',s=>s.put({b,t:r.headers.get('content-type')||'image/jpeg'},key));
+              sizes[key]=b.byteLength;
+            }
+          }
+        }catch(e){
+          if(!ttOnline()||/quota|full|storage/i.test(String(e&&(e.name||e.message))))throw e;
+          missing++; sizes[key]=0;
+        }
+        done++;
+        if(done%10===0||done===plan.keys.length){st.text=`Downloading map… ${Math.round(done*100/plan.keys.length)}%`;paint();}
+      }
+    };
+    await Promise.all([work(),work(),work(),work()]);
+    const tiles=plan.keys.filter(k=>sizes[k]>0);
+    bytes=tiles.reduce((a,k)=>a+sizes[k],0)+JSON.stringify(buildings).length;
+    const preparedAt=ttNow();
+    const pack={id,preparedAt,geoAt:t.geoAt||'',tiles,missing,maxZ:plan.maxZ,buildings,bytes};
+    await ttIdbDo('packs','readwrite',s=>s.put(pack,id));
+    // 3. tidy up map pictures that no territory needs any more
+    const old=ttPackSummaries();
+    const sums=Object.assign({},old,{[id]:{preparedAt,geoAt:t.geoAt||'',tiles:tiles.length,missing,maxZ:plan.maxZ,buildings:buildings.length,bytes}});
+    ttSavePackSummaries(sums);
+    ttPackFeatures.c&&delete ttPackFeatures.c[id];
+    await ttRemoveUnusedTiles();
+    await persisted;
+    if(id===currentTerritoryId&&housesVisible&&!editMode)loadHouses();
+    ttOfflineLayer.redraw();
+    banner(`${(t.name||'TERRITORY').toUpperCase()} IS READY FOR OFFLINE`);
+    setTimeout(()=>{if($('banner').textContent.endsWith('READY FOR OFFLINE'))banner('');},4000);
+  }catch(e){
+    console.warn('Get ready for offline stopped:',e);
+    alert('Could not finish getting ready for offline: '+(e?.message||e)+'\n\nWhat was already downloaded is kept. Tap the button again to finish.');
+  }finally{
+    ttPrepareOffline.busy=null; delete ttPrepState[id];
+    if($('territoryManager').classList.contains('show'))ttRenderManager();
+  }
+}
+async function ttRemoveUnusedTiles(){
+  const keep=new Set();
+  const packs=await ttIdbDo('packs','readonly',s=>s.getAll()).catch(()=>null);
+  if(!packs)return;
+  packs.forEach(p=>(p.tiles||[]).forEach(k=>keep.add(k)));
+  const all=await ttIdbDo('tiles','readonly',s=>s.getAllKeys()).catch(()=>[]);
+  const gone=all.filter(k=>!keep.has(k));
+  for(let i=0;i<gone.length;i+=200)await ttIdbDo('tiles','readwrite',s=>{gone.slice(i,i+200).forEach(k=>s.delete(k));});
+}
+async function ttClearOffline(id,ask=true){
+  const t=territoryRegistry.find(x=>x.id===id);
+  if(ask&&!confirm(`Remove the offline copy of "${t?.name||'this territory'}" from this device?\n\nYour houses, notes and boundary are NOT affected.`))return;
+  const sums=ttPackSummaries(); delete sums[id]; ttSavePackSummaries(sums);
+  ttPackFeatures.c&&delete ttPackFeatures.c[id];
+  await ttIdbDo('packs','readwrite',s=>s.delete(id)).catch(()=>{});
+  await ttRemoveUnusedTiles();
+  if($('territoryManager').classList.contains('show'))ttRenderManager();
+}
+// Find offline copies that the browser has cleared (Safari can do this to sites not opened for a while).
+async function ttCheckPacks(){
+  const sums=ttPackSummaries(), ids=Object.keys(sums); if(!ids.length)return;
+  const stored=new Set(await ttIdbDo('packs','readonly',s=>s.getAllKeys()).catch(()=>ids));
+  ttCheckPacks.lost=new Set(ids.filter(i=>!stored.has(i)));
+  // territories deleted here: drop their offline copy too
+  for(const i of ids)if(!territoryRegistry.some(t=>t.id===i))await ttClearOffline(i,false);
+  ttCheckReminders();
+}
+function ttPackState(t){
+  const s=ttPackSummaries()[t.id];
+  if(!s)return {state:'none'};
+  const days=Math.floor((Date.now()-new Date(s.preparedAt).getTime())/864e5);
+  if(ttCheckPacks.lost&&ttCheckPacks.lost.has(t.id))return {state:'lost',s,days};
+  if((t.geoAt||'')>(s.geoAt||''))return {state:'changed',s,days};
+  return {state:days>=TT_STALE_DAYS?'old':'ready',s,days};
+}
+function ttMB(b){return b>=1048576?(b/1048576).toFixed(1)+' MB':Math.max(1,Math.round(b/1024))+' KB';}
+function ttAgo(days,iso){
+  const d=new Date(iso).toLocaleDateString([], {month:'short',day:'numeric'});
+  return days<=0?`today (${d})`:days===1?`yesterday (${d})`:`${days} days ago (${d})`;
+}
+function ttOfflineRow(t){
+  const box=document.createElement('div'); box.className='tmOffline'; box.dataset.id=t.id;
+  const txt=document.createElement('span'); txt.className='tmOffText';
+  const mk=(label,fn,title)=>{const b=document.createElement('button');b.type='button';b.textContent=label;if(title)b.title=title;b.onclick=fn;return b;};
+  const btns=[];
+  if(ttPrepState[t.id]){txt.textContent='⏳ '+ttPrepState[t.id].text;box.append(txt);return box;}
+  const p=ttPackState(t);
+  const detail=s=>`${s.tiles} map pictures · ${s.buildings} buildings · ${ttMB(s.bytes||0)}`;
+  if(p.state==='none'){
+    txt.textContent='📴 Not ready for offline';
+    btns.push(mk('📥 Get ready for offline',()=>ttPrepareOffline(t.id),'Download this territory\'s map and buildings for use without signal'));
+  }else{
+    const s=p.s;
+    if(p.state==='ready'){txt.innerHTML='<span class="ok">✅ Ready offline</span> · prepared '+ttAgo(p.days,s.preparedAt)+' · '+detail(s);}
+    else if(p.state==='old'){txt.innerHTML='<span class="warn">⚠️ Prepared '+ttAgo(p.days,s.preparedAt)+'.</span> Tap Update before going out, while you have signal. · '+detail(s);}
+    else if(p.state==='changed'){txt.innerHTML='<span class="warn">⚠️ The boundary changed after this was prepared.</span> Tap Update to cover the new area.';}
+    else{txt.innerHTML='<span class="warn">⚠️ The offline copy was cleared by the browser.</span> Tap Update while you have signal.';}
+    if(s.missing&&p.state!=='lost')txt.append(` (no map detail for ${s.missing} spots; buildings and boundary still show)`);
+    btns.push(mk('🔄 Update',()=>ttPrepareOffline(t.id),'Download this territory again'));
+    btns.push(mk('✖',()=>ttClearOffline(t.id),'Remove the offline copy from this device'));
+  }
+  box.append(txt,...btns);
+  return box;
+}
+function ttStandalone(){return !!(window.matchMedia&&matchMedia('(display-mode: standalone)').matches)||navigator.standalone===true;}
+async function ttRenderStorage(){
+  const el=$('tmStorage'); if(!el)return;
+  const sums=ttPackSummaries(), offBytes=Object.values(sums).reduce((a,s)=>a+(s.bytes||0),0);
+  let used='', prot='';
+  try{
+    if(navigator.storage&&navigator.storage.estimate){const e=await navigator.storage.estimate();if(e&&e.usage!=null)used=` (this app uses ${ttMB(e.usage)} on this device in total)`;}
+    if(navigator.storage&&navigator.storage.persisted)prot=(await navigator.storage.persisted())?'🔒 Protected from automatic clean-up.':'Not protected yet: if this app is not opened for about a week, iPhone/iPad may clear the offline maps. Open it every few days, or tap Update before going out.';
+  }catch(e){}
+  const where=ttStandalone()?'You are using the home-screen app.':'You are using the browser.';
+  el.innerHTML='';
+  const line=(t,b)=>{const d=document.createElement('div');if(b)d.style.fontWeight='700';d.textContent=t;el.appendChild(d);};
+  line(`${ttOnline()?'● Online':'● Offline'} · offline maps: ${ttMB(offBytes)}${used}`,true);
+  if(prot)line(prot);
+  line(`${where} On iPhone and iPad the home-screen app and Safari keep separate copies: get territories ready in the one you use in the field. To move houses and notes between them, use Cloud Sync (Save All in one, Load All in the other) or Export / Import.`);
+}
+// Reminders: offline copy getting old or cleared, and changes not shared for a long time.
+function ttCheckReminders(){
+  const t=ttCurrent&&ttCurrent(); if(!t||editMode)return;
+  const p=ttPackState(t), today=new Date().toDateString();
+  if(localStorage.getItem('tt_offline_reminded')===today+'|'+t.id+'|'+p.state)return;
+  let msg='';
+  if(p.state==='lost')msg='⚠️ THE OFFLINE MAP FOR THIS TERRITORY WAS CLEARED. OPEN TERRITORIES AND TAP UPDATE WHILE YOU HAVE SIGNAL';
+  else if(p.state==='old')msg=`⚠️ OFFLINE MAP PREPARED ${p.days} DAYS AGO. TAP UPDATE IN TERRITORIES BEFORE GOING OUT`;
+  else if(p.state==='changed')msg='⚠️ BOUNDARY CHANGED: TAP UPDATE IN TERRITORIES TO REFRESH THE OFFLINE MAP';
+  if(!msg)return;
+  localStorage.setItem('tt_offline_reminded',today+'|'+t.id+'|'+p.state);
+  banner(msg); setTimeout(()=>{if($('banner').textContent===msg)banner('');},7000);
+}
+
+// ---- app updates (sw.js) ----
+let ttSwReg=null, ttUpdateRequested=false;
+function ttShowUpdate(w){
+  const el=$('updateToast'); el.classList.add('show');
+  el.onclick=()=>{
+    if(editMode){banner('FINISH OR CANCEL THE EDIT FIRST, THEN TAP THE UPDATE MESSAGE');return}
+    try{ttSaveCurrent();}catch(e){}
+    ttUpdateRequested=true; el.textContent='Updating…';
+    w.postMessage('skipWaiting');
+    setTimeout(()=>location.reload(),4000);   // in case the browser does not report the switch
+  };
+}
+if('serviceWorker' in navigator&&location.protocol!=='file:'){
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{if(ttUpdateRequested)location.reload();});
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js').then(reg=>{
+      ttSwReg=reg;
+      if(reg.waiting&&navigator.serviceWorker.controller)ttShowUpdate(reg.waiting);
+      reg.addEventListener('updatefound',()=>{
+        const w=reg.installing; if(!w)return;
+        w.addEventListener('statechange',()=>{if(w.state==='installed'&&navigator.serviceWorker.controller)ttShowUpdate(w);});
+      });
+    }).catch(e=>console.warn('Offline app support is not available here:',e?.message||e));
+  });
+}
+{
+  const v=document.createElement('div'); v.className='small'; v.style.cssText='margin-top:8px;text-align:center;color:#8e8e93';
+  v.textContent='App version '+TT_APP_VERSION; $('syncLast').after(v);
+}
+ttNetChanged.last=ttOnline();
+ttUseOfflineMap(!ttOnline());
+ttUpdateNet();
+setTimeout(()=>{ttCheckPacks();if(localStorage.getItem('tt_storage_persisted')!=='1'&&Object.keys(ttPackSummaries()).length)ttRequestPersist();},1200);
+// "Online" can be wrong (Wi-Fi without internet, one bar of signal): check once at start.
+if(navigator.onLine)setTimeout(ttNetCheck,1000);
+if(ttOnline())setTimeout(()=>ttAutoSync(),3000);
 loadHouses();
 })();
 </script>
